@@ -502,10 +502,10 @@ function SettingsCard() {
                 setError(undefined)
               },
             }),
-            React.createElement('span', { key: 'label' }, '接管 deepseek-official（无分身，原生图片显示）'),
+            React.createElement('span', { key: 'label' }, '接管 deepseek-official（原生图片显示）'),
           ]),
           React.createElement('p', { key: 'hint', className: 'mindseye-section-hint' },
-            '开启后需重启生效；启动失败会自动恢复官方适配器。'),
+            '默认开启；修改后需重启生效。启动失败会自动恢复官方适配器，并降级为路径粘贴。'),
         ]),
         React.createElement('section', { key: 'default', className: 'mindseye-section' }, [
           React.createElement('div', { key: 'title', className: 'mindseye-section-title' }, '通用理解模型'),

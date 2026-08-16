@@ -32,7 +32,7 @@ export const Config: Schema<MindsEyeConfig> = z.object({
   cacheTtlMs: z.number().default(3_600_000),
   promptVersion: z.string().default('mindseye-v1'),
   downscaleMaxPixels: z.number().default(4_000_000),
-  takeover: z.boolean().default(false),
+  takeover: z.boolean().default(true),
   pasteToPath: z.boolean().default(true),
   maxBatch: z.number().step(1).min(1).default(5),
   routes: z.dict(z.array(routeSchema)).default({}),

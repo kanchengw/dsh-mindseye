@@ -37,17 +37,17 @@ MindsEye 是一个 DeepSeek Harness（dsh）vision 插件。粘贴图片后，�
 
 - `understand / extract / locate` 三条路由，按需添加，未配置自动回退默认模型
 - Base URL、API Key（脱敏 + 眼睛切换）、模型 ID、协议（显式选择）、Max Tokens 常用值下拉
-- 模型接管开关：开启后重启生效，启动失败自动恢复官方适配器
+- 模型接管（默认开启）：修改后重启生效；启动失败自动恢复官方适配器并降级为路径粘贴
 
 ## 安装
 
-从 GitHub 安装（npm 发布前）：
+从 npm 安装：
 
 ```sh
-npx @deepseek-ai/dsh plugin --profile web add github:kanchengw/dsh-mindseye
+npx @deepseek-ai/dsh plugin --profile web add dsh-mindseye
 ```
 
-重启 dsh web，在 Settings → Plugins → MindsEye 中开启“模型接管”并保存，再次重启即可原生粘贴图片。
+重启 dsh web 即可原生粘贴图片。“模型接管”默认开启，可在 Settings → Plugins → MindsEye 中调整。
 
 ## 配置
 
