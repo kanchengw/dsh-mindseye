@@ -217,8 +217,8 @@ export function parseBatchText(
     for (const image of images) {
       const value = parsed[image.id]
       if (typeof value === 'string') results.set(image.id, value)
-      else if (typeof value === 'object' && value !== null && typeof (value as { text?: unknown }).text === 'string') {
-        results.set(image.id, (value as { text: string }).text)
+      else if (typeof value === 'object' && value !== null) {
+        results.set(image.id, JSON.stringify(value))
       } else {
         errors.set(image.id, 'batch response omitted this image')
       }

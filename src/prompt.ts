@@ -11,23 +11,42 @@ const INTENT_PROMPTS: Record<VisionIntent, string> = {
   general: 'Describe the image in enough detail for a text-only assistant to answer follow-up questions accurately.',
 }
 
-export function buildPrompt(intent: VisionIntent, query?: string): string {
-  const instruction = INTENT_PROMPTS[intent]
-  if (query === undefined || query.trim() === '') return instruction
-  return `${instruction}\n\nQuestion: ${query}`
+const EVIDENCE_INSTRUCTION: Partial<Record<VisionIntent, string>> = {
+  ocr: 'Return a JSON object: {"answer": "<你的回答>", "evidence": {"ocr": {"fullText": "<逐字全文>", "language": "<语言，可选>"}}}.',
+  layout: 'Return a JSON object: {"answer": "<你的回答>", "evidence": {"layout": [{"region": "x1,y1,x2,y2", "content": "<区域内容>"}]}}.',
+  grounding: 'Return a JSON object: {"answer": "<你的回答>", "evidence": {"elements": [{"type": "<元素类型>", "label": "<标签>", "box": {"x1":0,"y1":0,"x2":0,"y2":0}}]}}.',
+  color: 'Return a JSON object: {"answer": "<你的回答>", "evidence": {"colors": [{"hex": "#RRGGBB", "share": 0.5}]}}.',
 }
 
-export function buildBatchPrompt(intent: VisionIntent, ids: string[], query?: string): string {
+export function buildPrompt(intent: VisionIntent, query?: string, region?: string): string {
+  const instruction = INTENT_PROMPTS[intent]
+  const parts = [instruction]
+  const evidence = EVIDENCE_INSTRUCTION[intent]
+  if (evidence !== undefined) parts.push(evidence)
+  if (region !== undefined && region.trim() !== '') {
+    parts.push(`Focus on the pixel region ${region.trim()} (original image coordinates).`)
+  }
+  if (query !== undefined && query.trim() !== '') parts.push(`Question: ${query}`)
+  return parts.join('\n\n')
+}
+
+export function buildBatchPrompt(intent: VisionIntent, ids: string[], query?: string, region?: string): string {
   const question = query === undefined || query.trim() === ''
     ? '分别描述每张图。'
     : query.trim()
   const instruction = intent === 'ocr'
     ? '对每张图分别做逐字文字提取，严格按原图顺序。'
     : INTENT_PROMPTS[intent]
-  return [
+  const evidence = EVIDENCE_INSTRUCTION[intent]
+  const parts = [
     `以下是 ${ids.length} 张图，每张图前面有“图N（id: ...）”标签。`,
     instruction,
-    `必须返回一个 JSON 对象，键为图片 id，值为该图对应的回答字符串（OCR 意图返回转录文本）。不要遗漏任何 id。`,
-    `用户问题：${question}`,
-  ].join('\n')
+    `必须返回一个 JSON 对象，键为图片 id，值为对象 {"text": "<该图回答>", "evidence": {...}}；evidence 可选，OCR/布局/定位/颜色请按各自结构返回。不要遗漏任何 id。`,
+  ]
+  if (evidence !== undefined) parts.push(evidence)
+  if (region !== undefined && region.trim() !== '') {
+    parts.push(`聚焦像素区域 ${region.trim()}（原始图像坐标）。`)
+  }
+  parts.push(`用户问题：${question}`)
+  return parts.join('\n')
 }

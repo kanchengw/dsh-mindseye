@@ -15,6 +15,7 @@ import { registerPasteRoute } from './bridge/paste.js'
 import type { ImageAttachmentLike } from './bridge/sanitize.js'
 import { normalizeBaseUrl } from './route.js'
 import { readImageWithMindsEye, readImagesWithMindsEye } from './tool.js'
+import { probeDimensions } from './bridge/image-meta.js'
 
 export { Config, MINDSEYE_SETTINGS_NAMESPACE }
 export type { MindsEyeConfig }
@@ -28,7 +29,7 @@ export async function apply(ctx: Context, config: MindsEyeConfig = {}): Promise<
   let credentials: CredentialProvider | undefined
   let persistSettings: ((section: { routes: unknown; fallbacks: unknown }) => Promise<void>) | undefined
   let imageRefs = new Map<string, ImageAttachmentLike>()
-  const cache = new ExactVisionCache(config.cacheMaxEntries ?? 200, config.cacheTtlMs ?? 3_600_000)
+  const cache = new ExactVisionCache(config.cacheMaxEntries ?? 500, Number.POSITIVE_INFINITY)
   const promptVersion = config.promptVersion ?? 'mindseye-v1'
   const toolName = config.toolName ?? 'mindseye_read_image'
 
@@ -119,7 +120,7 @@ export async function apply(ctx: Context, config: MindsEyeConfig = {}): Promise<
 
   const probeImage = async (bytes: Uint8Array): Promise<{ width: number; height: number; format: string }> => {
     const format = sniffFormat(bytes)
-    return { width: 0, height: 0, format }
+    return { ...probeDimensions(bytes, format), format }
   }
 
   const toDataUrl = (bytes: Uint8Array, format: string): string =>
@@ -233,6 +234,7 @@ export async function apply(ctx: Context, config: MindsEyeConfig = {}): Promise<
             attachmentIds: ids,
             intent: classification.intent,
             query: args.query,
+            region: args.region,
             fallback,
           },
           {
@@ -395,5 +397,6 @@ function sniffFormat(bytes: Uint8Array): string {
   if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return 'png'
   if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'jpeg'
   if (bytes.length >= 4 && bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46) return 'webp'
+  if (bytes.length >= 6 && ['GIF87a', 'GIF89a'].includes(Buffer.from(bytes.subarray(0, 6)).toString('ascii'))) return 'gif'
   return 'png'
 }

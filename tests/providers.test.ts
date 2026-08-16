@@ -116,10 +116,13 @@ describe('parseBatchText', () => {
 
   it('parses JSON keyed by image id', () => {
     const parsed = parseBatchText(JSON.stringify({
-      'sha256:a': { text: 'answer A' },
+      'sha256:a': { text: 'answer A', evidence: { ocr: { fullText: 'hi' } } },
       'sha256:b': 'answer B',
     }), images)
-    expect(parsed.results.get('sha256:a')).toBe('answer A')
+    expect(parsed.results.get('sha256:a')).toBe(JSON.stringify({
+      text: 'answer A',
+      evidence: { ocr: { fullText: 'hi' } },
+    }))
     expect(parsed.results.get('sha256:b')).toBe('answer B')
     expect(parsed.errors.size).toBe(0)
   })

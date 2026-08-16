@@ -7,6 +7,7 @@ import { buildImageInfo, fingerprintBytes } from './evidence.js'
 import { normalizeBaseUrl, routeLabel } from './route.js'
 import type { BatchVisionResult } from './providers.js'
 import type { VisionIntent } from './types.js'
+import { extractStructured, parseStructuredValue } from './bridge/evidence-extract.js'
 
 export const PROMPT_VERSION = 'mindseye-v1'
 
@@ -22,7 +23,7 @@ export interface CreateVisionToolDeps {
     prompt: string
     route: VisionRoute
   }) => Promise<{ analysis: VisionResult['answer']; usage?: TokenUsage }>
-  buildPrompt: (intent: VisionResult['intent'], query?: string) => string
+  buildPrompt: (intent: VisionResult['intent'], query?: string, region?: string) => string
   toDataUrl: (bytes: Uint8Array, format: string) => string
 }
 
@@ -34,7 +35,7 @@ export interface CreateBatchVisionToolDeps {
     prompt: string
     routes: VisionRoute[]
   }) => Promise<BatchVisionResult>
-  buildBatchPrompt: (intent: VisionResult['intent'], ids: string[], query?: string) => string
+  buildBatchPrompt: (intent: VisionResult['intent'], ids: string[], query?: string, region?: string) => string
   toDataUrl: (bytes: Uint8Array, format: string) => string
 }
 
@@ -81,19 +82,23 @@ export async function readImageWithMindsEye(
   }
 
   const started = Date.now()
-  const prompt = deps.buildPrompt(classification.intent, options.query)
+  const prompt = deps.buildPrompt(classification.intent, options.query, options.region)
   const vision = await deps.runVision({
     dataUrl: deps.toDataUrl(bytes, image.format),
     prompt,
     route,
   })
+  const extracted = extractStructured(vision.analysis.text, classification.intent)
+  const answer = extracted === undefined
+    ? vision.analysis
+    : { text: extracted.answer, structured: extracted.evidence }
   const result: VisionResult = {
     version: 1,
     intent: classification.intent,
     ...(normalizedQuery === '' ? {} : { query: normalizedQuery }),
     images: [image],
-    evidence: {},
-    answer: vision.analysis,
+    evidence: extracted?.evidence ?? {},
+    answer,
     meta: {
       provider: routeLabel(route.baseUrl),
       model: identity.model,
@@ -112,6 +117,7 @@ export interface BatchReadOptions {
   attachmentIds: string[]
   intent: VisionIntent
   query?: string
+  region?: string
   fallback?: string
 }
 
@@ -137,13 +143,19 @@ export async function readImagesWithMindsEye(
   const started = Date.now()
   const outcome = await deps.runVisionBatch({
     images: payload,
-    prompt: deps.buildBatchPrompt(options.intent, options.attachmentIds, options.query),
+    prompt: deps.buildBatchPrompt(options.intent, options.attachmentIds, options.query, options.region),
     routes,
   })
   const resultsJson: Record<string, JsonValue> = {}
   const errorsJson: Record<string, JsonValue> = {}
   for (const [id, text] of outcome.results) {
-    resultsJson[id] = { text }
+    const structured = parseStructuredValue(text)
+    resultsJson[id] = structured === undefined
+      ? { text }
+      : {
+          text: structured.text,
+          ...(Object.keys(structured.evidence).length > 0 ? { evidence: structured.evidence } : {}),
+        }
   }
   for (const [id, message] of outcome.errors) {
     errorsJson[id] = { error: message }

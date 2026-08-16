@@ -89,6 +89,34 @@ describe('readImageWithMindsEye', () => {
     expect(first.result.meta.fallback).toBe('extract-not-configured')
   })
 
+  it('extracts structured evidence and forwards region to the prompt', async () => {
+    let seenRegion: string | undefined
+    const deps = {
+      readImage: async () => new TextEncoder().encode('image-bytes'),
+      probeImage: async () => ({ width: 10, height: 20, format: 'png' }),
+      runVision: async () => ({
+        analysis: { text: JSON.stringify({
+          answer: 'A',
+          evidence: { ocr: { fullText: 'hi', language: 'eng' } },
+        }) },
+      }),
+      buildPrompt: (_intent: unknown, _query?: string, region?: string) => {
+        seenRegion = region
+        return 'prompt'
+      },
+      toDataUrl: (bytes: Uint8Array, format: string) => `data:image/${format};base64,${Buffer.from(bytes).toString('base64')}`,
+    }
+    const routes = [{ model: 'm', baseUrl: 'https://p/v1', apiKeyEnv: 'K' }]
+    const first = await readImageWithMindsEye(
+      { path: '/a.png', query: '识别文字', region: '1,2,3,4' },
+      deps,
+      routes,
+    )
+    expect(first.result.evidence).toMatchObject({ ocr: { fullText: 'hi' } })
+    expect(first.result.answer.text).toBe('A')
+    expect(seenRegion).toBe('1,2,3,4')
+  })
+
   it('reads multiple images in one batch call', async () => {
     const deps = {
       readImage: async ({ attachmentId }: { attachmentId?: string }) =>
@@ -117,6 +145,36 @@ describe('readImageWithMindsEye', () => {
       results: { 'sha256:a': { text: 'answer A' }, 'sha256:b': { text: 'answer B' } },
     })
     expect(result.meta.usage?.totalTokens).toBe(2)
+  })
+
+  it('extracts per-image evidence from batch results', async () => {
+    const deps = {
+      readImage: async ({ attachmentId }: { attachmentId?: string }) =>
+        new TextEncoder().encode(`bytes-${attachmentId}`),
+      probeImage: async () => ({ width: 10, height: 20, format: 'png' }),
+      runVisionBatch: async () => ({
+        results: new Map([
+          ['sha256:a', JSON.stringify({
+            text: 'answer A',
+            evidence: { colors: [{ hex: '#ff0000', share: 0.5 }] },
+          })],
+        ]),
+        errors: new Map(),
+        attempts: [{ provider: 'p', model: 'm', ok: true, latencyMs: 1, images: 1 }],
+      }),
+      buildBatchPrompt: () => 'batch prompt',
+      toDataUrl: (bytes: Uint8Array, format: string) => `data:image/${format};base64,${Buffer.from(bytes).toString('base64')}`,
+    }
+    const routes = [{ model: 'm', baseUrl: 'https://p/v1', apiKeyEnv: 'K' }]
+    const result = await readImagesWithMindsEye(
+      { attachmentIds: ['sha256:a'], intent: 'color' },
+      deps,
+      routes,
+    )
+    const perImage = result.answer.structured as { results: Record<string, { evidence?: unknown }> }
+    expect(perImage.results['sha256:a']?.evidence).toEqual({
+      colors: [{ hex: '#ff0000', share: 0.5 }],
+    })
   })
 })
 
