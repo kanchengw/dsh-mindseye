@@ -1,0 +1,12 @@
+node_modules/
+lib/
+dist/
+coverage/
+.dsh-test/
+.client-build/
+*.log
+.DS_Store
+.env
+.env.*
+!.env.example
+_tmp/

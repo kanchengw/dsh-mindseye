@@ -1,0 +1,4 @@
+# MindsEye dsh bundle layer.
+- insert:
+    - id: mindseye
+      name: 'dsh-mindseye'
