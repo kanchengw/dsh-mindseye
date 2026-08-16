@@ -502,7 +502,7 @@ function SettingsCard() {
                 setError(undefined)
               },
             }),
-            React.createElement('span', { key: 'label' }, '接管 deepseek-official（原生图片显示）'),
+            React.createElement('span', { key: 'label' }, '接管 deepseek-official（显示图片，多模态原生模式）'),
           ]),
           React.createElement('p', { key: 'hint', className: 'mindseye-section-hint' },
             '默认开启；修改后需重启生效。启动失败会自动恢复官方适配器，并降级为路径粘贴。'),
