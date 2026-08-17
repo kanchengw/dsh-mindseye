@@ -8,16 +8,16 @@ describe('resolveApiKeyValue', () => {
 
   it('resolves an environment variable name', async () => {
     await expect(resolveApiKeyValue('DASHSCOPE_API_KEY', {
-      env: (name) => name === 'DASHSCOPE_API_KEY' ? 'sk-env-value' : undefined,
-    })).resolves.toBe('sk-env-value')
+      env: (name) => name === 'DASHSCOPE_API_KEY' ? 'env-api-key-value' : undefined,
+    })).resolves.toBe('env-api-key-value')
   })
 
   it('resolves a dsh credential reference when env is missing', async () => {
     await expect(resolveApiKeyValue('DASHSCOPE_API_KEY', {
       ...deps,
       resolveCredential: async (name) =>
-        name === 'DASHSCOPE_API_KEY' ? { value: 'sk-cred-value' } : undefined,
-    })).resolves.toBe('sk-cred-value')
+        name === 'DASHSCOPE_API_KEY' ? { value: 'credential-api-key-value' } : undefined,
+    })).resolves.toBe('credential-api-key-value')
   })
 
   it('treats a non-identifier value as a literal key', async () => {
