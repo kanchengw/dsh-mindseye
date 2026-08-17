@@ -1,5 +1,7 @@
 # MindsEye
 
+![MindsEye header](assets/MindsEye-header.png)
+
 [![dsh.so security](https://www.dsh.so/badges/dsh-mindseye.svg)](https://www.dsh.so/artifact/dsh-mindseye/)
 
 > 让 DeepSeek 原生看图 —— model-driven vision tools for DeepSeek Harness
