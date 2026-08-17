@@ -33,6 +33,14 @@ MindsEye 是一个 DeepSeek Harness（dsh）vision 插件。粘贴图片后，�
 - 多路由 fallback 链，失败自动切换
 - 多图批量调用 + 指数降级（批量 4xx 按半数拆分重试，`locate` 不支持批量）
 
+### 数据处理与安全边界
+
+- **原生附件优先**：支持图片输入的模型保留 dsh 原生附件；MindsEye 通过附件 ID 关联图片，不要求用户手动选择本地文件。
+- **自动临时路径降级**：当当前模型被确认是文本模型时，启用的 `paste-to-path` 会校验用户刚粘贴的 PNG、JPEG、WebP 或 GIF（单张最多 25 MiB），保存到独立的系统临时目录并自动返回分配的路径。临时文件以 `0600` mode 创建，用户无需手动提供路径。
+- **外部视觉调用**：只有执行 `mindseye_read_image` 并调用用户配置的视觉 Provider 时，图片字节与问题内容才会发送到该 Provider 的 Base URL。用户应仅配置自己信任的服务。
+- **凭据与缓存**：API Key 从环境变量、dsh Credentials 或插件设置解析，并仅以 Bearer 认证发送给对应 Provider。精确缓存只保存在当前 dsh 进程内存，最多 500 条；它不写入持久化数据库，并会在进程退出时清空。
+- **执行边界**：插件不启动 shell、子进程或下载后执行代码。正常 Web 粘贴降级只读取插件刚为该次粘贴生成的临时图片；工具接口也支持 dsh 附件 ID。
+
 ### dsh Web 设置卡
 
 - `understand / extract / locate` 三条路由，按需添加，未配置自动回退默认模型
