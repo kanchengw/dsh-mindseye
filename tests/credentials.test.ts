@@ -21,8 +21,8 @@ describe('resolveApiKeyValue', () => {
   })
 
   it('treats a non-identifier value as a literal key', async () => {
-    await expect(resolveApiKeyValue('sk-2c7d2de5370741e4ad2d7bae68c04e35', deps))
-      .resolves.toBe('sk-2c7d2de5370741e4ad2d7bae68c04e35')
+    await expect(resolveApiKeyValue('test-api-key-value', deps))
+      .resolves.toBe('test-api-key-value')
   })
 
   it('throws for an unresolved identifier', async () => {
