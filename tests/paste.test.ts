@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { computePasteVerdict, sniffImageExt } from '../src/bridge/paste.js'
+import { readFile, rm } from 'node:fs/promises'
+import { basename, dirname } from 'node:path'
+import { Readable } from 'node:stream'
+import { computePasteVerdict, registerPasteRoute, sniffImageExt } from '../src/bridge/paste.js'
 
 describe('sniffImageExt', () => {
   it('recognizes png, jpeg, webp, and gif', () => {
@@ -56,5 +59,42 @@ describe('computePasteVerdict', () => {
     }
     await expect(computePasteVerdict(contextWithLlm(llm) as never, 'unknown'))
       .resolves.toBe(false)
+  })
+})
+
+describe('registerPasteRoute', () => {
+  it('stores a pasted image in an isolated temporary directory', async () => {
+    let handler: ((req: any, res: any) => Promise<void>) | undefined
+    const ctx = {
+      inject: (_services: string[], callback: (webCtx: any) => void) => callback({
+        webServer: {
+          register: (route: { handler: (req: any, res: any) => Promise<void> }) => {
+            handler = route.handler
+          },
+        },
+      }),
+    }
+    registerPasteRoute(ctx as never, { enabled: () => true })
+
+    const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    const request = Object.assign(Readable.from([bytes]), { method: 'POST', url: '/_dsh/mindseye/paste' })
+    let status = 0
+    let body = ''
+    const response = {
+      writeHead: (value: number) => { status = value },
+      end: (value: string) => { body = value },
+    }
+
+    await handler?.(request, response)
+
+    expect(status).toBe(200)
+    const path = (JSON.parse(body) as { value: { path: string } }).value.path
+    try {
+      expect(basename(path)).toBe('paste.png')
+      expect(basename(dirname(path))).toMatch(/^mindseye-paste-/)
+      await expect(readFile(path)).resolves.toEqual(bytes)
+    } finally {
+      await rm(dirname(path), { recursive: true, force: true })
+    }
   })
 })
