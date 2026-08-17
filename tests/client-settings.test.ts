@@ -62,4 +62,17 @@ describe('client settings codec', () => {
     const partial = updateRoute(draft.overrides.extract, { model: 'qwen3-vl-ocr' })
     expect(optionalRouteValidationError(partial)).toBeDefined()
   })
+
+  it('round-trips tool activation toggles', () => {
+    const encoded = encodeSettings({
+      ...decodeSettings({}),
+      autoActivateOnImage: false,
+      progressiveTools: false,
+    } as any)
+    expect(encoded.autoActivateOnImage).toBe(false)
+    expect(encoded.progressiveTools).toBe(false)
+    const decoded = decodeSettings(encoded)
+    expect(decoded.autoActivateOnImage).toBe(false)
+    expect(decoded.progressiveTools).toBe(false)
+  })
 })

@@ -12,7 +12,7 @@ const INTENT_PROMPTS: Record<VisionIntent, string> = {
 }
 
 const EVIDENCE_INSTRUCTION: Partial<Record<VisionIntent, string>> = {
-  ocr: 'Return a JSON object: {"answer": "<你的回答>", "evidence": {"ocr": {"fullText": "<逐字全文>", "language": "<语言，可选>"}}}.',
+  ocr: 'Return a JSON object with only the evidence field: {"evidence": {"ocr": {"fullText": "<逐字全文>", "language": "<语言，可选>"}}}. Do not add an answer field.',
   layout: 'Return a JSON object: {"answer": "<你的回答>", "evidence": {"layout": [{"region": "x1,y1,x2,y2", "content": "<区域内容>"}]}}.',
   grounding: 'Return a JSON object: {"answer": "<你的回答>", "evidence": {"elements": [{"type": "<元素类型>", "label": "<标签>", "box": {"x1":0,"y1":0,"x2":0,"y2":0}}]}}.',
   color: 'Return a JSON object: {"answer": "<你的回答>", "evidence": {"colors": [{"hex": "#RRGGBB", "share": 0.5}]}}.',

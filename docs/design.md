@@ -40,7 +40,7 @@ DeepSeek Harness 的核心 DeepSeek 模型是纯文本模型，不能原生读�
 ```text
 核心层（所有用户）：
   粘贴即看图
-  意图识别 + 模型路由
+  模型选工具 + 多模型路由
   结构化 JSON 证据
   轻量记忆与复用
 
@@ -53,7 +53,7 @@ DeepSeek Harness 的核心 DeepSeek 模型是纯文本模型，不能原生读�
 产品原则：
 
 - GUI 模块不进入默认体验，避免膨胀工具 schema；
-- 记忆层默认轻量，不上向量库、不常驻 embedding 模型；
+- 记忆层默认轻量，不引入向量库；工具选择由模型驱动，不维护规则分类器或本地 embedding 路由；
 - 产品主体必须是原生 dsh 插件，不依赖第三方 MCP server 作为核心能力；
 - MCP 只用于原型验证或作为可选执行器适配器。
 
@@ -109,7 +109,7 @@ Y 轴：推理深度：原子检索 → 关系关联 → 演化综合
 用户粘贴图片
   → 附件/路径进入 dsh
   → vision plugin
-      ├── 意图识别与路由
+      ├── 工具选择与模型路由
       ├── 视觉模型调用（OCR / QA / grounding / 本地算法）
       ├── 结构化 JSON 输出
       ├── 证据写入（后台异步）
@@ -121,48 +121,44 @@ Y 轴：推理深度：原子检索 → 关系关联 → 演化综合
 插件对外暴露的工具建议：
 
 ```text
-vision_read(path | attachmentId, intent?, query?, region?, provider?, model?)
-vision_ocr(path | attachmentId, region?, language?)
-vision_ground(path | attachmentId, target, region?)
-vision_detect(path | attachmentId, category?, region?)
-vision_compare(a, b, region?)
-vision_memory_put(image, analysis)
-vision_memory_get(image_hash, intent?, query?)
-vision_memory_search(text | image)
+mindseye_read_image(path | attachmentId | attachmentIds, query?, region?, model?)
+mindseye_ocr(path | attachmentId | attachmentIds, query?, region?, model?)
+mindseye_ground(path | attachmentId, query, region?, model?)
+mindseye_colors(path | attachmentId | attachmentIds, query?, region?, model?)
+mindseye_vision_activate()
+mindseye_memory_put / get / search / diff
 ```
 
 ## 5. 核心设计
 
-### 5.1 意图识别与模型路由
+### 5.1 工具选择与模型路由
 
-意图用于**路由**，不用于**缓存判等**。
-
-粗粒度意图：
+意图用于**路由**，不用于**缓存判等**。意图不再由插件猜测，也不再要求模型显式传 `intent` 参数：插件把每个意图固化为一个工具，由 DeepSeek 根据用户问题选择工具，工具内部再按固定映射选择模型链。
 
 ```text
-ocr              → OCR 专用模型 / 本地 tesseract
-visual-qa        → 通用视觉理解模型
-grounding        → grounding 能力强的视觉模型
-layout           → 布局/结构理解模型
-chart            → 图表专用模型
-color            → 本地像素算法
-pixel-diff       → 本地像素算法
+DeepSeek 选工具（意图路由）
+  → 工具固定意图（注册时确定）
+  → 意图映射到路由族（understand / extract / locate）
+  → 路由族映射到可配置的 provider/model fallback 链
 ```
 
-路由规则：
+当前工具与路由映射：
 
-- 规则优先：关键词、正则、文件类型、用户显式 intent，高置信度直接路由，零延迟；
-- 规则低置信度时：走 embedding semantic router（V2），无 LLM、可处理同义改写，结果必须可解释、可测试；
-- 每个 intent 可配置 provider/model fallback 链；
-- 路由结果必须进入输出 JSON 的 `meta.intent`。
+| 工具 | 固定意图 | 路由族 | 批量 |
+| --- | --- | --- | --- |
+| `mindseye_read_image` | visual-qa | understand | 支持 |
+| `mindseye_ocr` | ocr | extract | 支持 |
+| `mindseye_ground` | grounding | locate | 不支持 |
+| `mindseye_colors` | color | understand | 支持 |
 
-V2 两级路由：
+设计要点：
 
-```text
-规则匹配（关键词 / 正则 / 显式 intent）
-  ├─ confidence 高 → 直接路由，零延迟
-  └─ confidence 低 → embedding semantic router → 同义改写归一后路由
-```
+- 模型只负责“选工具”，不需要知道内部模型链；工具描述是路由的第一层约束；
+- 每个路由族可配置独立模型链，未配置的 extract / locate 自动回退到 understand，再回退到全局 fallbacks；
+- 图片轮通过 `agent/pre-step` 检测图片消息并自动挂载视觉工具（`autoActivateOnImage`，默认开）；
+- 渐进式暴露（`progressiveTools`，默认开）时纯文本轮只注册 `mindseye_vision_activate`，避免工具定义常驻挤占 DeepSeek 上下文；图片轮或显式调用后注册全套工具；
+- 不再维护关键词规则、正则评分或 embedding semantic router，消除了“颜色词 + 位置词”这类规则冲突的持续维护成本；
+- 路由结果进入输出 JSON 的 `intent` 字段，便于审计和证据复用。
 
 ### 5.2 结构化 JSON 输出契约
 
@@ -219,9 +215,11 @@ V2 两级路由：
 - OCR 全文；
 - 布局区域；
 - 元素列表 + 坐标；
-- 色板 / 尺寸 / 来源。
+- 色板（`{ hex, share }`）/ 尺寸 / 来源。
 
-证据层是视觉记忆的基础。同一张图，OCR 和坐标不会因为问题变化而改变，可以安全复用。
+证据层是视觉记忆的基础。同一张图，OCR 全文和布局区域不会因为问题变化而改变，可以安全复用；色板只对明确整图级颜色问题（如“整体主色”“整张图有哪些颜色”）直接复用，其他颜色问题注入色板后仍调模型；元素列表只注入、不直接复用。
+
+V1 只负责把证据结构化输出到结果里（单图 `evidence`、批量 `answer.structured.results[id].evidence`），跨调用按哈希复用属于 V2 Nexus 记忆层。
 
 ### 5.4 精确缓存
 
@@ -353,7 +351,6 @@ retrievalMs          检索/记忆耗时
 | BM25 检索 | 几 ms |
 | SQLite/JSONL 写入 | 后台异步，不阻塞 |
 | embedding / 向量库 | v1 不做；后期可选且后台 |
-| embedding semantic router | V2 引入，仅规则低置信度时进入关键路径：本地小模型 10-50 ms / 云端一次 embedding |
 
 关键路径对比：
 
@@ -363,7 +360,7 @@ retrievalMs          检索/记忆耗时
 本插件命中：直接返回，<10 ms
 ```
 
-因此记忆层不会成为延迟负担；真正要避免的是把 embedding 和向量库放进关键路径。
+因此记忆层不会成为延迟负担；工具选择发生在模型侧，插件关键路径只有模型链解析与记忆检索。
 
 ## 7. 安全与隐私
 
@@ -379,7 +376,8 @@ retrievalMs          检索/记忆耗时
 ```text
 竞品普遍做到：粘贴看图、OCR、定位、像素对比
 我们要做到：
-  意图路由（更聪明）
+  模型驱动的工具路由（更自然，不靠规则猜）
+  工具固定意图 + 多意图模型链（OCR/定位可各自选专用模型）
   结构化 JSON（更可复用）
   持久视觉记忆（跨会话、跨问题）
   可评测（MemEye 式验证）
@@ -412,29 +410,35 @@ GUI 不作为 v1 默认能力，作为 Pro 模块：
 
 ### V1：Vision 核心（最大用户量）
 
-目标：让 DeepSeek 用户“粘贴即看图”，提供意图路由和结构化输出。
+目标：让 DeepSeek 用户“粘贴即看图”，提供模型驱动的工具路由和结构化输出。
 
 范围：
 
-- 粘贴桥接：图片进入 dsh，文本模型不再拒绝；
-- 意图识别与模型路由：OCR / visual-qa / grounding / 本地算法；
-- ModLens 风格结构化 JSON 输出；
-- 证据层 + 精确缓存；
-- 基础设置页：provider/model/fallback/缓存开关；
+- 图片入口：模型接管 `deepseek-official`（无分身、原生显示、失败自动恢复官方适配器并降级路径粘贴）；`paste-to-path` 兜底；工具支持 `path` / `attachmentId` / `attachmentIds`；
+- 工具选择与模型路由：模型按用户问题选工具；`mindseye_read_image / mindseye_ocr / mindseye_ground / mindseye_colors` 各自固定意图；三档路由 understand / extract / locate 可分别配置模型链，未配置自动回退；
+- 工具挂载：图片轮 `agent/pre-step` 自动挂载视觉工具（`autoActivateOnImage`）；渐进式暴露默认只保留 `mindseye_vision_activate`（`progressiveTools`）；
+- 结构化 JSON 输出：images / evidence / answer / meta（usage、attempts、fallback）；
+- 证据输出：OCR 全文、布局区域、元素坐标、色板（单图 + 批量）；
+- 精确缓存：单图与批量一致，500 条 LRU、无 TTL、无 UI 开关；
+- 多图批量 + 指数降级（批量 4xx 半数拆分重试；locate 不支持批量）；
+- 真实图片尺寸（PNG/JPEG/WebP/GIF 头部解析）；
+- 历史带图会话 sanitizer，回退模式不毒化旧会话；
+- 基础设置页：understand/extract/locate 三路由按需添加、Base URL、API Key 脱敏、模型 ID、协议、Max Tokens 常用值；
 - 支持 Web profile。
 
-不做：
+V1 不做：
 
-- 不做 embedding / 向量库；
-- 不做软记忆检索；
-- 不做 GUI 自动化；
+- 本地像素算法（color / pixel-diff / measure）→ V2；
+- 不做 embedding / 向量库 / semantic router；
+- 软记忆检索与 evidence 跨问题复用 → V2（Nexus）；
+- GUI 自动化 → V3；
 - 不引入第三方 MCP server 作为核心依赖。
 
 验收：
 
 - 首次看图延迟与主流竞品持平；
 - 同图同问法命中缓存时显著快于竞品；
-- OCR/QA/grounding 路由正确率有可量化的测试集；
+- OCR/QA/grounding 模型链选择正确、工具调用无必填参数报错；
 - 无 Python、无常驻服务、低内存占用。
 
 ### V2：持久视觉记忆
@@ -446,13 +450,12 @@ GUI 不作为 v1 默认能力，作为 Pro 模块：
 - SQLite/JSONL 视觉记忆库；
 - evidence + analysis 双层存储；
 - BM25 软记忆检索；
-- 两级意图路由：规则优先 + embedding semantic router（处理同义改写，不依赖 LLM）；
+- 模型驱动工具路由持续演进：新增视觉能力时新增工具并映射模型链，不引入规则分类器；
 - 决策元数据：modelCall / source / matchedEvidenceIds / softMemoryHits / usage / 检索耗时；
 - userNotice 与模型转述：仅在收益明显时生成，可开关；可选 UI 审计卡片；
-- 记忆工具：put / get / search / diff；
-- 遗忘、TTL、去重、矛盾覆盖；
-- MemEye 式评测矩阵：场景 / 区域 / 实例 / 像素 x 检索 / 关联 / 演化；
-- 浏览器 GUI 自动化 MVP（Playwright 执行器 + 截图回验）。
+- 记忆工具：put / get / search / diff（已暴露为 dsh 工具，调用走审批与审计）；
+- 遗忘、TTL、去重、矛盾覆盖：evidence 按容量 LRU 淘汰，软记忆 30 天 TTL；
+- MemEye 式评测矩阵：暂缓，代码侧不再提供 routingAccuracy；
 
 验收：
 
@@ -460,7 +463,26 @@ GUI 不作为 v1 默认能力，作为 Pro 模块：
 - 同一图片不同问题不误用旧答案；
 - 软记忆注入有可观测的准确率提升；
 - 记忆库体积和延迟在预算内；
-- GUI MVP 能在受控浏览器里完成 3-5 步任务。
+
+### V2.5：图片生成路由
+
+目标：让 DeepSeek 不仅能看图，还能按用户意图生成图片，并自动进入视觉回验闭环。
+
+范围：
+
+- 独立工具 `mindseye_generate_image`：`prompt / size / n`
+- 可选“图片生成模型”配置：`baseUrl / apiKey / model`，OpenAI-compatible `images/generations`（`b64_json` 或 URL）
+- 生成结果经 `ctx.attachments.saveImage()` 持久化，返回 `attachmentId / path`
+- 生成调用走 dsh 审批与审计
+- 生成后可用 `mindseye_read_image` 回验生成结果（按 `attachmentId` 关联）
+- 第一版先返回附件引用；dsh `ImageBlock` 的 assistant 侧渲染是前向兼容，确认 UI 能渲染后再升级为 image block
+
+验收：
+
+- 文本模型会话里能生成图片并查看结果；
+- 生成结果可被继续追问（局部修改、描述画面）；
+- 生成调用有审批、审计、真实 provider/model/latency 元数据；
+- 生成路由不进入读取意图分类，避免污染 `understand / extract / locate`。
 
 ### V3：GUI 自动化与高级检索
 
@@ -486,8 +508,9 @@ GUI 不作为 v1 默认能力，作为 Pro 模块：
 
 风险：
 
-- 意图路由分类错误会导致选错模型；
-- embedding semantic router 的置信度阈值过低会引入错误路由，需默认保守；
+- 模型选错工具时，视觉模型会按错误工具的任务 prompt 回答，需要工具描述足够清晰；
+- 工具定义常驻会占用模型上下文，靠 `progressiveTools` 和图片轮自动挂载控制；
+- 每个工具固定映射到路由族，新增视觉能力时要同步扩展工具集与设置页；
 - 软记忆注入可能误导模型，必须标记为参考而非权威；
 - 记忆库可能积累过期截图，必须依赖 TTL 和用户控制；
 - GUI 自动化的安全边界较难完全保证，必须默认隔离运行；
@@ -495,7 +518,6 @@ GUI 不作为 v1 默认能力，作为 Pro 模块：
 
 开放问题：
 
-- embedding semantic router 的置信度阈值与低置信度回退策略，需按测试集评估；
 - 记忆库放 workspace 还是 `DSH_HOME`，需兼顾团队协作与隐私；
 - 是否默认开启记忆，还是由用户显式开启；
 - GUI 模块的免费额度与付费分层。

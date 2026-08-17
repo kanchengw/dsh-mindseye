@@ -12,6 +12,11 @@ export interface MindsEyeConfig {
   takeover?: boolean
   pasteToPath?: boolean
   maxBatch?: number
+  autoActivateOnImage?: boolean
+  progressiveTools?: boolean
+  memoryDir?: string
+  memory?: boolean
+  userNotice?: boolean
   routes?: Partial<Record<RouteKind, VisionRoute[]>>
   fallbacks?: VisionRoute[]
 }
@@ -31,6 +36,11 @@ export const Config: Schema<MindsEyeConfig> = z.object({
   takeover: z.boolean().default(true),
   pasteToPath: z.boolean().default(true),
   maxBatch: z.number().step(1).min(1).default(5),
+  autoActivateOnImage: z.boolean().default(true),
+  progressiveTools: z.boolean().default(true),
+  memoryDir: z.string(),
+  memory: z.boolean().default(true),
+  userNotice: z.boolean().default(true),
   routes: z.dict(z.array(routeSchema)).default({}),
   fallbacks: z.array(routeSchema).default([]),
 })

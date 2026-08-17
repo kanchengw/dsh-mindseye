@@ -12,16 +12,64 @@ export function extractStructured(
 ): { answer: string; evidence: VisualEvidence } | undefined {
   if (!structuredEvidenceIntent(intent)) return undefined
   const parsed = tryParseJsonObject(text)
-  if (parsed === undefined || typeof parsed.answer !== 'string') return undefined
+  if (parsed === undefined) return undefined
+  if (intent === 'ocr') {
+    const normalized = normalizeOcrAnswer(parsed)
+    if (normalized !== undefined) return normalized
+  }
+  if (typeof parsed.answer !== 'string') return undefined
   return { answer: parsed.answer, evidence: normalizeEvidence(parsed.evidence) }
 }
 
 export function parseStructuredValue(
   value: string,
+  intent?: VisionIntent,
 ): { text: string; evidence: VisualEvidence } | undefined {
   const parsed = tryParseJsonObject(value)
-  if (parsed === undefined || typeof parsed.text !== 'string') return undefined
+  if (parsed === undefined) return undefined
+  if (intent === 'ocr') {
+    const normalized = normalizeOcrAnswer(parsed)
+    if (normalized !== undefined) {
+      return { text: normalized.answer, evidence: normalized.evidence }
+    }
+  }
+  if (typeof parsed.text !== 'string') return undefined
   return { text: parsed.text, evidence: normalizeEvidence(parsed.evidence) }
+}
+
+/**
+ * qwen-style OCR models return {"answer": [{"rotate_rect", "text"}]} without
+ * the standard evidence envelope. Normalize that shape into our ocr.fullText
+ * contract so the result can be persisted and reused.
+ */
+export function normalizeOcrAnswer(
+  parsed: Record<string, unknown>,
+): { answer: string; evidence: VisualEvidence } | undefined {
+  const evidence = normalizeEvidence(parsed.evidence)
+  const ocr = evidence.ocr
+  const ocrFullText = isRecord(ocr) && typeof (ocr as Record<string, unknown>).fullText === 'string'
+    ? (ocr as Record<string, unknown>).fullText as string
+    : undefined
+  if (ocrFullText !== undefined) {
+    return { answer: ocrFullText, evidence }
+  }
+  if (!Array.isArray(parsed.answer)) return undefined
+  const lines = parsed.answer
+    .filter(isRecord)
+    .map((item) => (typeof item.text === 'string' ? item.text.trim() : ''))
+    .filter((line) => line !== '')
+  if (lines.length === 0) return undefined
+  const storedFullText = isRecord(ocr) && typeof (ocr as Record<string, unknown>).fullText === 'string'
+    ? (ocr as Record<string, unknown>).fullText as string
+    : undefined
+  const storedLanguage = isRecord(ocr) && typeof (ocr as Record<string, unknown>).language === 'string'
+    ? (ocr as Record<string, unknown>).language as string
+    : undefined
+  const fullText = storedFullText ?? lines.join('\n')
+  return {
+    answer: fullText,
+    evidence: { ocr: { fullText, ...(storedLanguage === undefined ? {} : { language: storedLanguage }) } },
+  }
 }
 
 function tryParseJsonObject(text: string): Record<string, unknown> | undefined {

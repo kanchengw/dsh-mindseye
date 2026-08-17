@@ -82,6 +82,12 @@ export const visionResultSchema = z.object({
     cache: z.enum(['hit', 'miss']),
     usage: tokenUsageSchema.optional(),
     fallback: z.string().optional(),
+    matchedEvidenceIds: z.array(z.string()).optional(),
+    softMemoryHits: z.number().int().nonnegative().optional(),
+    retrievalMs: z.number().nonnegative().optional(),
+    modelCall: z.boolean().optional(),
+    source: z.string().optional(),
+    userNotice: z.string().optional(),
   }),
 })
 

@@ -36,12 +36,6 @@ export interface RoutingConfig {
   fallbacks?: VisionRoute[]
 }
 
-export interface IntentClassification {
-  intent: VisionIntent
-  matchedRules: string[]
-  confidence: number
-}
-
 export interface ImageInfo {
   sha256: string
   path?: string
@@ -115,6 +109,12 @@ export interface VisionResult {
     cache: 'hit' | 'miss'
     usage?: TokenUsage
     fallback?: string
+    matchedEvidenceIds?: string[]
+    softMemoryHits?: number
+    retrievalMs?: number
+    modelCall?: boolean
+    source?: string
+    userNotice?: string
   }
 }
 

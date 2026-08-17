@@ -1,8 +1,8 @@
 export const OVERRIDE_KINDS = ['extract', 'locate']
 
 export const OVERRIDE_LABELS = {
-  extract: '文字提取（OCR）',
-  locate: '空间定位（Grounding）',
+  extract: '文字提取（mindseye_ocr）',
+  locate: '空间定位（mindseye_ground）',
 }
 
 export function emptyRoute() {
@@ -46,6 +46,8 @@ export function decodeSettings(section) {
     defaultRoute: configRouteToDraft(understandRoute),
     overrides,
     takeover: value.takeover === true,
+    autoActivateOnImage: value.autoActivateOnImage !== false,
+    progressiveTools: value.progressiveTools !== false,
   }
 }
 
@@ -126,6 +128,8 @@ export function encodeSettings(draft) {
   return {
     routes,
     fallbacks: [],
+    autoActivateOnImage: draft.autoActivateOnImage !== false,
+    progressiveTools: draft.progressiveTools !== false,
     ...(draft.takeover === true ? { takeover: true } : {}),
   }
 }

@@ -38,7 +38,9 @@ export function attachmentNameOf(block: ImageBlockLike): string {
 export function imageMarkerText(block: ImageBlockLike): string {
   const name = attachmentNameOf(block)
   const id = attachmentIdOf(block)
-  return `[图片「${name}」已上传，附件 id 为「${id}」。当前文本模型无法直接查看图片；需要看图时调用 mindseye_read_image 工具并传入 attachmentId: "${id}" 和具体问题。]`
+  return `[图片「${name}」已上传，附件 id 为「${id}」。当前文本模型无法直接查看图片；`
+    + `看图问答用 mindseye_read_image，文字提取用 mindseye_ocr，坐标定位用 mindseye_ground，`
+    + `整图颜色用 mindseye_colors，传入 attachmentId: "${id}"。]`
 }
 
 /**
