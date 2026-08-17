@@ -30,12 +30,7 @@ export async function apply(ctx: Context, config: MindsEyeConfig = {}): Promise<
   let currentConfig: MindsEyeConfig = config
   let settingsWritable = true
   let credentials: CredentialProvider | undefined
-  let persistSettings: ((section: {
-    routes: unknown
-    fallbacks: unknown
-    autoActivateOnImage?: boolean
-    progressiveTools?: boolean
-  }) => Promise<void>) | undefined
+  let persistSettings: ((section: { routes: unknown; fallbacks: unknown }) => Promise<void>) | undefined
   let imageRefs = new Map<string, ImageAttachmentLike>()
   const cache = new ExactVisionCache(config.cacheMaxEntries ?? 500, Number.POSITIVE_INFINITY)
   const metrics = new MetricsCollector()
@@ -316,48 +311,42 @@ export async function apply(ctx: Context, config: MindsEyeConfig = {}): Promise<
     visionToolsActive = false
   }, 'mindseye: vision tools')
 
-  if (currentConfig.progressiveTools !== false) {
-    ctx.tools.register(defineTool({
-      name: 'mindseye_vision_activate',
-      description:
-        '挂载 MindsEye 视觉工具（mindseye_read_image / mindseye_ocr / mindseye_ground / mindseye_colors）。'
-        + '图片轮会自动挂载；纯文本轮需要看图时先调用一次。',
-      parameters: {},
-      output: {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            activated: { type: 'boolean', required: true },
-            tools: { type: 'array', items: { type: 'string' }, required: true },
-          },
+  ctx.tools.register(defineTool({
+    name: 'mindseye_vision_activate',
+    description:
+      '挂载 MindsEye 视觉工具（mindseye_read_image / mindseye_ocr / mindseye_ground / mindseye_colors）。'
+      + '图片轮会自动挂载；纯文本轮需要看图时先调用一次。',
+    parameters: {},
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          activated: { type: 'boolean', required: true },
+          tools: { type: 'array', items: { type: 'string' }, required: true },
         },
-        render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
       },
-      async execute() {
-        return activateVisionTools()
-      },
-    }))
-  } else {
-    activateVisionTools()
-  }
+      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
+    },
+    async execute() {
+      return activateVisionTools()
+    },
+  }));
 
-  if (currentConfig.autoActivateOnImage !== false) {
-    (ctx as any).on('agent/pre-step', async (payload: any, next: () => Promise<unknown>) => {
-      const decision = await next()
-      if (decision !== null && typeof decision === 'object' && (decision as any).kind === 'reject') {
-        return decision
-      }
-      if (Array.isArray(payload?.messages) && messagesContainImage(payload.messages)) {
-        try {
-          activateVisionTools()
-        } catch (error) {
-          ctx.logger?.warn('mindseye: failed to auto-mount vision tools on an image turn', error)
-        }
-      }
+  (ctx as any).on('agent/pre-step', async (payload: any, next: () => Promise<unknown>) => {
+    const decision = await next()
+    if (decision !== null && typeof decision === 'object' && (decision as any).kind === 'reject') {
       return decision
-    })
-  }
+    }
+    if (Array.isArray(payload?.messages) && messagesContainImage(payload.messages)) {
+      try {
+        activateVisionTools()
+      } catch (error) {
+        ctx.logger?.warn('mindseye: failed to auto-mount vision tools on an image turn', error)
+      }
+    }
+    return decision
+  })
 }
 
 interface VisionToolSpec {
@@ -569,12 +558,7 @@ function registerConfigRoute(
   ctx: Context,
   getConfig: () => MindsEyeConfig,
   isWritable: () => boolean,
-  getPersist: () => ((section: {
-    routes: unknown
-    fallbacks: unknown
-    autoActivateOnImage?: boolean
-    progressiveTools?: boolean
-  }) => Promise<void>) | undefined,
+  getPersist: () => ((section: { routes: unknown; fallbacks: unknown }) => Promise<void>) | undefined,
 ): void {
   ctx.inject(['webServer'], (webCtx: any) => {
     webCtx.webServer.register({
@@ -599,12 +583,6 @@ function registerConfigRoute(
           const section = {
             routes: validated.routes ?? {},
             fallbacks: validated.fallbacks ?? [],
-            ...(validated.autoActivateOnImage === undefined
-              ? {}
-              : { autoActivateOnImage: validated.autoActivateOnImage }),
-            ...(validated.progressiveTools === undefined
-              ? {}
-              : { progressiveTools: validated.progressiveTools }),
             ...(validated.takeover === true ? { takeover: true } : {}),
           }
           await getPersist()?.(section)

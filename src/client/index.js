@@ -507,39 +507,6 @@ function SettingsCard() {
           React.createElement('p', { key: 'hint', className: 'mindseye-section-hint' },
             '默认开启；修改后需重启生效。启动失败会自动恢复官方适配器，并降级为路径粘贴。'),
         ]),
-        React.createElement('section', { key: 'tools', className: 'mindseye-section' }, [
-          React.createElement('div', { key: 'title', className: 'mindseye-section-title' }, '工具挂载'),
-          React.createElement('label', { key: 'auto', className: 'mindseye-toggle' }, [
-            React.createElement('input', {
-              key: 'input',
-              type: 'checkbox',
-              checked: draft.autoActivateOnImage === true,
-              disabled: !writable,
-              onChange: (event) => {
-                setDraft((current) => ({ ...current, autoActivateOnImage: event.target.checked }))
-                setStatus('')
-                setError(undefined)
-              },
-            }),
-            React.createElement('span', { key: 'label' }, '图片轮自动挂载视觉工具'),
-          ]),
-          React.createElement('label', { key: 'progressive', className: 'mindseye-toggle' }, [
-            React.createElement('input', {
-              key: 'input',
-              type: 'checkbox',
-              checked: draft.progressiveTools === true,
-              disabled: !writable,
-              onChange: (event) => {
-                setDraft((current) => ({ ...current, progressiveTools: event.target.checked }))
-                setStatus('')
-                setError(undefined)
-              },
-            }),
-            React.createElement('span', { key: 'label' }, '渐进式暴露（纯文本轮只保留激活工具）'),
-          ]),
-          React.createElement('p', { key: 'hint', className: 'mindseye-section-hint' },
-            '关闭自动挂载后，图片轮也需要模型先调用 mindseye_vision_activate。'),
-        ]),
         React.createElement('section', { key: 'default', className: 'mindseye-section' }, [
           React.createElement('div', { key: 'title', className: 'mindseye-section-title' }, '通用理解模型'),
           React.createElement('p', { key: 'hint', className: 'mindseye-section-hint' },

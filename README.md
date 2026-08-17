@@ -34,7 +34,7 @@ MindsEye 是一个 DeepSeek Harness（dsh）vision 插件。粘贴图片后，�
 
 - 每个工具在注册时固定意图，模型只负责“选工具”，不再传 `intent` 参数，也就不会再出现“缺少必填 intent”导致的整轮失败
 - `understand / extract / locate` 三档模型路由可分别配置，未配置时自动回退到通用理解模型
-- 图片轮自动挂载视觉工具（`autoActivateOnImage`，默认开）；渐进式暴露（`progressiveTools`，默认开）时纯文本轮只保留 `mindseye_vision_activate`
+- 图片轮自动挂载视觉工具；纯文本轮只保留 `mindseye_vision_activate` 作为激活入口，工具不会常驻挤占模型上下文
 - 结构化 JSON：`images` / `evidence` / `answer` / `meta`，`meta` 含真实 token usage、调用尝试与回退标记
 - 精确缓存：图片 sha256 + 归一化问题 + region + baseUrl + model + prompt 版本，命中时不再调用视觉模型
 
@@ -60,7 +60,7 @@ MindsEye 是一个 DeepSeek Harness（dsh）vision 插件。粘贴图片后，�
 
 ### dsh Web 设置卡
 
-- `understand / extract / locate` 三条路由，按需添加，未配置自动回退默认模型；工具挂载开关（图片轮自动挂载、渐进式暴露）
+- `understand / extract / locate` 三条路由，按需添加，未配置自动回退默认模型
 - Base URL、API Key（脱敏 + 眼睛切换）、模型 ID、协议（显式选择）、Max Tokens 常用值下拉
 - 模型接管默认开启：修改后重启生效，启动失败自动恢复官方适配器并降级为路径粘贴
 

@@ -155,8 +155,8 @@ DeepSeek 选工具（意图路由）
 
 - 模型只负责“选工具”，不需要知道内部模型链；工具描述是路由的第一层约束；
 - 每个路由族可配置独立模型链，未配置的 extract / locate 自动回退到 understand，再回退到全局 fallbacks；
-- 图片轮通过 `agent/pre-step` 检测图片消息并自动挂载视觉工具（`autoActivateOnImage`，默认开）；
-- 渐进式暴露（`progressiveTools`，默认开）时纯文本轮只注册 `mindseye_vision_activate`，避免工具定义常驻挤占 DeepSeek 上下文；图片轮或显式调用后注册全套工具；
+- 图片轮通过 `agent/pre-step` 检测图片消息并自动挂载视觉工具；
+- 纯文本轮只注册 `mindseye_vision_activate`，避免工具定义常驻挤占 DeepSeek 上下文；图片轮或显式调用后注册全套工具；
 - 不再维护关键词规则、正则评分或 embedding semantic router，消除了“颜色词 + 位置词”这类规则冲突的持续维护成本；
 - 路由结果进入输出 JSON 的 `intent` 字段，便于审计和证据复用。
 
@@ -416,7 +416,7 @@ GUI 不作为 v1 默认能力，作为 Pro 模块：
 
 - 图片入口：模型接管 `deepseek-official`（无分身、原生显示、失败自动恢复官方适配器并降级路径粘贴）；`paste-to-path` 兜底；工具支持 `path` / `attachmentId` / `attachmentIds`；
 - 工具选择与模型路由：模型按用户问题选工具；`mindseye_read_image / mindseye_ocr / mindseye_ground / mindseye_colors` 各自固定意图；三档路由 understand / extract / locate 可分别配置模型链，未配置自动回退；
-- 工具挂载：图片轮 `agent/pre-step` 自动挂载视觉工具（`autoActivateOnImage`）；渐进式暴露默认只保留 `mindseye_vision_activate`（`progressiveTools`）；
+- 工具挂载：图片轮 `agent/pre-step` 自动挂载视觉工具；纯文本轮只保留 `mindseye_vision_activate` 激活入口；
 - 结构化 JSON 输出：images / evidence / answer / meta（usage、attempts、fallback）；
 - 证据输出：OCR 全文、布局区域、元素坐标、色板（单图 + 批量）；
 - 精确缓存：单图与批量一致，500 条 LRU、无 TTL、无 UI 开关；
@@ -509,7 +509,7 @@ V1 不做：
 风险：
 
 - 模型选错工具时，视觉模型会按错误工具的任务 prompt 回答，需要工具描述足够清晰；
-- 工具定义常驻会占用模型上下文，靠 `progressiveTools` 和图片轮自动挂载控制；
+- 工具定义常驻会占用模型上下文，靠渐进式暴露和图片轮自动挂载控制；
 - 每个工具固定映射到路由族，新增视觉能力时要同步扩展工具集与设置页；
 - 软记忆注入可能误导模型，必须标记为参考而非权威；
 - 记忆库可能积累过期截图，必须依赖 TTL 和用户控制；

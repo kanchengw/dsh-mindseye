@@ -46,8 +46,6 @@ export function decodeSettings(section) {
     defaultRoute: configRouteToDraft(understandRoute),
     overrides,
     takeover: value.takeover === true,
-    autoActivateOnImage: value.autoActivateOnImage !== false,
-    progressiveTools: value.progressiveTools !== false,
   }
 }
 
@@ -128,8 +126,6 @@ export function encodeSettings(draft) {
   return {
     routes,
     fallbacks: [],
-    autoActivateOnImage: draft.autoActivateOnImage !== false,
-    progressiveTools: draft.progressiveTools !== false,
     ...(draft.takeover === true ? { takeover: true } : {}),
   }
 }
