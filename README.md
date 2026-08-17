@@ -1,5 +1,7 @@
 # MindsEye
 
+[![dsh.so security](https://www.dsh.so/badges/dsh-mindseye.svg)](https://www.dsh.so/artifact/dsh-mindseye/)
+
 > 让 DeepSeek 原生看图 —— intent-routed vision for DeepSeek Harness
 
 MindsEye 是一个 DeepSeek Harness（dsh）vision 插件。粘贴图片后，图片原样显示在会话里，DeepSeek 继续负责思考，视觉模型负责看图。插件根据问题自动路由到合适的视觉能力，返回结构化 JSON（含真实 token 用量），并通过缓存与多图批量减少重复开销。
