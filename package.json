@@ -4,6 +4,7 @@
   "description": "MindsEye: intent-routed vision, structured evidence, and exact cache for DeepSeek Harness",
   "type": "module",
   "private": false,
+  "license": "MIT",
   "main": "./lib/index.mjs",
   "types": "./lib/index.d.mts",
   "exports": {
