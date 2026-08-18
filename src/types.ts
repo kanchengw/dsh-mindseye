@@ -36,6 +36,35 @@ export interface RoutingConfig {
   fallbacks?: VisionRoute[]
 }
 
+export interface ImageGenerationRoute {
+  model: string
+  baseUrl: string
+  apiKeyEnv: string
+  defaultSize: string
+}
+
+export interface ImageGenerationSpec {
+  prompt: string
+  size: string
+  n: number
+  requestVersion: string
+}
+
+export type GeneratedImageMediaType = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
+
+export interface GeneratedImage {
+  data: Uint8Array
+  mediaType: GeneratedImageMediaType
+}
+
+export interface ImageGenerationAttempt {
+  provider: string
+  model: string
+  ok: boolean
+  latencyMs: number
+  error?: string
+}
+
 export interface ImageInfo {
   sha256: string
   path?: string
