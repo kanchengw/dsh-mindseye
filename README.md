@@ -34,7 +34,6 @@ MindsEye 是一个 DeepSeek Harness（dsh）vision 插件。粘贴图片后，�
 | `mindseye_ground` | 目标像素坐标定位 | locate | 不支持 |
 | `mindseye_colors` | 整图主色板 | understand | 支持 |
 
-- 每个工具在注册时固定意图，模型只负责“选工具”，不再传 `intent` 参数，也就不会再出现“缺少必填 intent”导致的整轮失败
 - `understand / extract / locate` 三档模型路由可分别配置，未配置时自动回退到通用理解模型
 - 图片轮自动挂载视觉工具；纯文本轮只保留 `mindseye_vision_activate` 作为激活入口，工具不会常驻挤占模型上下文
 - 结构化 JSON：`images` / `evidence` / `answer` / `meta`，`meta` 含真实 token usage、调用尝试与回退标记
@@ -49,7 +48,7 @@ MindsEye 是一个 DeepSeek Harness（dsh）vision 插件。粘贴图片后，�
 ### 记忆
 
 - 图片级硬事实按 sha256 持久化，evidence 按容量 LRU 淘汰（默认 1000 条）
-- 软记忆 BM25 检索历史问答注入上下文，30 天 TTL
+- 软记忆 BM25 检索历史问答注入上下文，历史问答按容量滚动淘汰（默认 1000 条）
 - `mindseye_memory_put / get / search / diff` 四个 dsh 工具，调用走审批与审计
 
 ### 数据处理与安全边界
