@@ -3,6 +3,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { credentialRef, type CredentialProvider } from '@deepseek-ai/dsh-credentials'
+import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { ExactVisionCache } from './cache.js'
 import { Config, MINDSEYE_SETTINGS_NAMESPACE, type MindsEyeConfig } from './config.js'
@@ -14,6 +15,8 @@ import { registerHistorySanitizer, runTakeover } from './bridge/takeover.js'
 import { registerPasteRoute } from './bridge/paste.js'
 import { messagesContainImage, type ImageAttachmentLike } from './bridge/sanitize.js'
 import { readImageWithMindsEye, readImagesWithMindsEye } from './tool.js'
+import { runImageGenerationChain } from './image-generation.js'
+import { createImageGenerationTool, imageGenerationApprovalGate } from './image-tools.js'
 import type { RouteKind, TokenUsage, VisionAnalysis, VisionIntent, VisionResult, VisionRoute } from './types.js'
 import { probeDimensions } from './bridge/image-meta.js'
 import { JsonlMemoryStore } from './memory/store.js'
@@ -24,13 +27,13 @@ export { Config, MINDSEYE_SETTINGS_NAMESPACE }
 export type { MindsEyeConfig }
 
 export const name = 'mindseye'
-export const inject = ['tools']
+export const inject = ['tools', 'attachments']
 
 export async function apply(ctx: Context, config: MindsEyeConfig = {}): Promise<void> {
   let currentConfig: MindsEyeConfig = config
   let settingsWritable = true
   let credentials: CredentialProvider | undefined
-  let persistSettings: ((section: { routes: unknown; fallbacks: unknown }) => Promise<void>) | undefined
+  let persistSettings: ((section: { routes: unknown; fallbacks: unknown; image: unknown }) => Promise<void>) | undefined
   let imageRefs = new Map<string, ImageAttachmentLike>()
   const cache = new ExactVisionCache(config.cacheMaxEntries ?? 500, Number.POSITIVE_INFINITY)
   const metrics = new MetricsCollector()
@@ -146,6 +149,58 @@ export async function apply(ctx: Context, config: MindsEyeConfig = {}): Promise<
     })
   }
 
+  const saveGeneratedImage = async (input: {
+    data: Uint8Array
+    mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
+    name?: string
+  }): Promise<{ attachmentId: string }> => {
+    const ref: ImageAttachmentRef = await ctx.attachments.saveImage(input)
+    const attachmentId = String(ref.attachmentId)
+    imageRefs.set(attachmentId, ref)
+    return { attachmentId }
+  }
+
+  const qaGeneratedImage = async (
+    input: { attachmentId: string; prompt: string },
+    signal?: AbortSignal,
+  ) => {
+    const routes = resolveRoutes({
+      routes: currentConfig.routes ?? {},
+      fallbacks: currentConfig.fallbacks,
+    }, 'understand')
+    if (routes.length === 0) {
+      return {
+        text: 'QA skipped: no understand vision route configured.',
+        latencyMs: 0,
+        attempts: [],
+        skipped: true,
+      }
+    }
+    const started = Date.now()
+    const bytes = await readImage({ attachmentId: input.attachmentId })
+    const image = await probeImage(bytes)
+    const qaQuery = [
+      'Check that this generated image is readable and plausibly matches the requested scene.',
+      'Identify unexpected readable text or a suspected watermark.',
+      `Requested scene: ${input.prompt}`,
+    ].join(' ')
+    const result = await runProviderChain({
+      routes,
+      dataUrl: toDataUrl(bytes, image.format),
+      prompt: buildPrompt('visual-qa', qaQuery),
+      resolveApiKey,
+      signal,
+    })
+    return {
+      text: result.analysis.text,
+      provider: result.provider,
+      model: result.model,
+      latencyMs: Date.now() - started,
+      attempts: result.attempts,
+      ...(result.usage === undefined ? {} : { usage: result.usage }),
+    }
+  }
+
   const toolServices: VisionToolServices = {
     readImage,
     probeImage,
@@ -180,6 +235,23 @@ export async function apply(ctx: Context, config: MindsEyeConfig = {}): Promise<
     buildBatchPrompt,
     metrics,
   }
+
+  ctx.tools.register(createImageGenerationTool({
+    routes: () => currentConfig.image?.routes ?? [],
+    generate: (spec, routes, signal) => runImageGenerationChain({
+      routes,
+      spec,
+      resolveApiKey,
+      signal,
+    }),
+    saveImage: saveGeneratedImage,
+    probeImage: (bytes) => {
+      const format = sniffFormat(bytes)
+      return { ...probeDimensions(bytes, format), format }
+    },
+    qa: qaGeneratedImage,
+  }))
+  ctx.on('tools/pre-execute', (exec, next) => imageGenerationApprovalGate(exec, next))
 
   const readImageTool = defineTool({
     name: config.toolName ?? 'mindseye_read_image',
@@ -558,7 +630,7 @@ function registerConfigRoute(
   ctx: Context,
   getConfig: () => MindsEyeConfig,
   isWritable: () => boolean,
-  getPersist: () => ((section: { routes: unknown; fallbacks: unknown }) => Promise<void>) | undefined,
+  getPersist: () => ((section: { routes: unknown; fallbacks: unknown; image: unknown }) => Promise<void>) | undefined,
 ): void {
   ctx.inject(['webServer'], (webCtx: any) => {
     webCtx.webServer.register({
@@ -583,6 +655,7 @@ function registerConfigRoute(
           const section = {
             routes: validated.routes ?? {},
             fallbacks: validated.fallbacks ?? [],
+            image: validated.image ?? { routes: [] },
             ...(validated.takeover === true ? { takeover: true } : {}),
           }
           await getPersist()?.(section)

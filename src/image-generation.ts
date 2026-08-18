@@ -141,6 +141,9 @@ async function decodeImages(
     const image = value as Record<string, unknown>
     if (typeof image.b64_json === 'string' && image.b64_json !== '') {
       const data = new Uint8Array(Buffer.from(image.b64_json, 'base64'))
+      if (data.byteLength > MAX_IMAGE_BYTES) {
+        throw new ImageGenerationProviderError('invalid-input', 'image provider returned an oversized image')
+      }
       return { data, mediaType: mediaTypeOf(data) }
     }
     if (typeof image.url === 'string' && image.url !== '') {

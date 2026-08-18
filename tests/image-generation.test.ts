@@ -79,6 +79,20 @@ describe('callImageGenerationProvider', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
+
+  it('rejects oversized base64 image responses before saving an attachment', async () => {
+    const oversized = Buffer.alloc(25 * 1024 * 1024 + 1)
+    oversized.set([0x89, 0x50, 0x4e, 0x47])
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      data: [{ b64_json: oversized.toString('base64') }],
+    }))
+
+    await expect(callImageGenerationProvider({
+      route,
+      apiKey: 'secret',
+      spec: { prompt: 'a precise image', size: '1024x1024', n: 1, requestVersion: 'v1' },
+    }, fetchMock as unknown as typeof fetch)).rejects.toMatchObject({ kind: 'invalid-input' })
+  })
 })
 
 describe('runImageGenerationChain', () => {

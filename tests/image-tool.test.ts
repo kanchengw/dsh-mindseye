@@ -24,7 +24,11 @@ describe('generateImagesWithMindsEye', () => {
       attempts: [{ provider: 'images.example', model: 'image-model', ok: true, latencyMs: 1 }],
     }))
     const saveImage = vi.fn(async () => ({ attachmentId: 'image-1' }))
-    const qa = vi.fn(async () => 'The image is readable and depicts the requested subject.')
+    const qa = vi.fn(async () => ({
+      text: 'The image is readable and depicts the requested subject.',
+      latencyMs: 1,
+      attempts: [],
+    }))
 
     const result = await generateImagesWithMindsEye({ prompt: 'a coral red eye', n: 1 }, {
       generate,
@@ -34,11 +38,11 @@ describe('generateImagesWithMindsEye', () => {
     }, [route])
 
     expect(generate).toHaveBeenCalledWith({
-      prompt: 'a coral red eye',
+      prompt: 'a coral red eye\n\nDo not include a watermark, signature, logo, or any unrelated readable text.',
       size: '1024x1024',
       n: 1,
       requestVersion: 'mindseye-image-generation-v1',
-    }, [route])
+    }, [route], undefined)
     expect(saveImage).toHaveBeenCalledWith(expect.objectContaining({ data: png, mediaType: 'image/png' }))
     expect(result.images).toEqual([expect.objectContaining({
       attachmentId: 'image-1',
@@ -46,7 +50,10 @@ describe('generateImagesWithMindsEye', () => {
       height: 20,
       format: 'png',
     })])
-    expect(result.meta.qa).toEqual(['The image is readable and depicts the requested subject.'])
+    expect(result.meta.qa).toEqual([expect.objectContaining({
+      attachmentId: 'image-1',
+      text: 'The image is readable and depicts the requested subject.',
+    })])
   })
 
   it('rejects candidate counts outside the public tool contract before calling a provider', async () => {
@@ -59,5 +66,50 @@ describe('generateImagesWithMindsEye', () => {
     }, [route])).rejects.toThrow('n must be between 1 and 4')
 
     expect(generate).not.toHaveBeenCalled()
+  })
+
+  it('keeps a saved candidate when a later candidate cannot be stored', async () => {
+    const result = await generateImagesWithMindsEye({ prompt: 'two eyes', n: 2 }, {
+      generate: async () => ({
+        images: [
+          { data: png, mediaType: 'image/png' as const },
+          { data: png, mediaType: 'image/png' as const },
+        ],
+        provider: 'images.example',
+        model: 'image-model',
+        attempts: [],
+      }),
+      saveImage: vi.fn()
+        .mockResolvedValueOnce({ attachmentId: 'image-1' })
+        .mockRejectedValueOnce(new Error('attachment store unavailable')),
+      probeImage: () => ({ width: 10, height: 20, format: 'png' }),
+    }, [route])
+
+    expect(result.images).toHaveLength(1)
+    expect(result.failures).toEqual([{
+      candidate: 2,
+      stage: 'save',
+      error: 'attachment store unavailable',
+    }])
+  })
+
+  it('reports QA failures without discarding a saved candidate', async () => {
+    const result = await generateImagesWithMindsEye({ prompt: 'an eye', n: 1 }, {
+      generate: async () => ({
+        images: [{ data: png, mediaType: 'image/png' as const }],
+        provider: 'images.example',
+        model: 'image-model',
+        attempts: [],
+      }),
+      saveImage: async () => ({ attachmentId: 'image-1' }),
+      probeImage: () => ({ width: 10, height: 20, format: 'png' }),
+      qa: async () => { throw new Error('vision route unavailable') },
+    }, [route])
+
+    expect(result.images).toHaveLength(1)
+    expect(result.meta.qa).toEqual([expect.objectContaining({
+      attachmentId: 'image-1',
+      text: 'QA unavailable: vision route unavailable',
+    })])
   })
 })
