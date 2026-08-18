@@ -368,7 +368,7 @@ retrievalMs          检索/记忆耗时
 - 图片只发送给用户配置的视觉后端；
 - 记忆库中图片路径/哈希可保留，原始图片文件按用户配置保留或清理；
 - 视觉输出中的文字/指令视为 untrusted evidence，不得作为系统指令；
-- 记忆查询和写入工具纳入 dsh 审批/审计；
+- 记忆查询和写入工具在会话中可见，并记录审计；
 - 支持用户一键清除某个 workspace 的视觉记忆。
 
 ## 8. 与竞品的差异化
@@ -453,7 +453,7 @@ V1 不做：
 - 模型驱动工具路由持续演进：新增视觉能力时新增工具并映射模型链，不引入规则分类器；
 - 决策元数据：modelCall / source / matchedEvidenceIds / softMemoryHits / usage / 检索耗时；
 - userNotice 与模型转述：仅在收益明显时生成，可开关；可选 UI 审计卡片；
-- 记忆工具：put / get / search / diff（已暴露为 dsh 工具，调用走审批与审计）；
+- 记忆工具：put / get / search / diff（已暴露为 dsh 工具，调用在会话中可见，不弹审批）；
 - 遗忘、TTL、去重、矛盾覆盖：evidence 按容量 LRU 淘汰，软记忆 30 天 TTL；
 - MemEye 式评测矩阵：暂缓，代码侧不再提供 routingAccuracy；
 
@@ -466,7 +466,7 @@ V1 不做：
 
 ### V2.5：图片生成路由
 
-目标：让纯文本模型能委托专用图片生成模型创建可追溯的视觉资产，并把结果作为 dsh 附件交回现有视觉工具链。V2.5 的闭环是“生成 -> 保存 -> 回验 -> 继续对话”，而不是把 `images/generations` 做成一次性的 prompt 转发。
+目标：让纯文本模型能委托专用图片生成模型创建可追溯的视觉资产，并把结果作为 dsh 附件交回现有视觉工具链。V2.5 的闭环是“生成 -> 保存 -> 继续对话”，而不是把 `images/generations` 做成一次性的 prompt 转发。
 
 #### 设计边界
 
@@ -474,40 +474,37 @@ V1 不做：
 - 第一版只做文本到图像生成，不做 inpainting、outpainting、参考图编辑、工作流编排或浏览器自动化。
 - `mindseye_generate_image` 返回附件引用和可审计元数据；assistant 侧 `ImageBlock` 渲染仍是前向兼容项，不能成为调用成功的前提。
 - 图片生成默认不做精确缓存。一次生成的意图通常是取得新候选；除非未来显式提供“复用已有 artifact”的参数，否则相同 prompt 也应发起新请求。
+- 生成工具注册原生样式的 `tool.call.toolview` 展示图片和审计行；模型侧 `render` 保留 image block 使附件进入会话引用，同时输出 `<generated-image>` 文本标记和 `(token_usage=..., 宽x高, 大小)` 审计行，另通过 `presentationMeta + presentResult` 提供回放展示。usage 来自 Provider 响应，缺失时显示 `n/a`。
 
 #### 工具契约
 
 ```text
-mindseye_generate_image(prompt)
+mindseye_generate_image(subject, context?)
 
-prompt  必填，描述要生成的画面；最大长度由 schema 限制
+request   由工具自动读取最新一条用户消息，模型不填写
+subject   必填，本次要生成的主体/主题，由模型从用户消息或历史对话提取
+context   可选，来自更早对话的风格/约束背景
 ```
 
-工具的内部请求在调用前归一化为 `ImageGenerationSpec`：
+模型不负责扩展 prompt，也不能改写 request。插件在 `execute` 时从会话读取最新 `user/message` 原文，再拼装 `ImageGenerationSpec`：
 
 ```text
-prompt
+prompt = 主题：<subject>\n用户本次需求：<request>[\n上下文：<context>]
 requestVersion
 ```
 
-这一步只为审计、测试和未来演进提供稳定边界，不添加未被调用方支持的“通用风格”“负面 prompt”或 seed 参数。Provider 专有参数如有必要，后续通过明确版本化的扩展加入，不能默默透传用户输入。
+拼装保证用户的当次要求原样出现在提示词开头，避免模型整段改写用户意图。这一步只为审计、测试和未来演进提供稳定边界，不添加未被调用方支持的“通用风格”“负面 prompt”或 seed 参数。Provider 专有参数如有必要，后续通过明确版本化的扩展加入，不能默默透传用户输入。
 
 成功返回：
 
 ```text
 images[]
   attachmentId
-  path
   sha256
   width / height / format
 
 meta
   provider / model
-  latencyMs
-  attempts[]
-  requestVersion
-  source = generated
-  qa[]                         -- 每张图的回验结果；未请求回验时为空
 ```
 
 `attachmentId` 是后续 `mindseye_read_image` 的唯一关联方式；本地 `path` 只是兼容性信息，不能要求模型在文本里拼接或读取任意路径。
@@ -526,29 +523,22 @@ image.routes[]
 - 协议为 OpenAI-compatible `POST /images/generations`；第一版支持 Provider 返回 `b64_json` 或下载型 URL。
 - 路由按顺序尝试主模型与后备模型。仅 `quota`、`rate-limit`、网络错误和 5xx 可以切换后备；认证错误和无效参数应直接报告，避免掩盖错误配置或花费第二次调用。
 - API Key 仍只通过 dsh Credentials、环境变量或插件设置解析；请求、日志、工具结果和 artifact 元数据都不得包含密钥。
-- 图片生成调用同样经过 dsh approval 与审计。审批内容应显示候选数、尺寸、目标 Provider 与模型，但不展示完整 API Key。
+- 图片生成调用在会话中可见并记录审计，不弹审批。审计内容包含候选数、尺寸、目标 Provider 与模型，不展示完整 API Key。
 
 对于 URL 响应，下载器是一个安全边界：只接受 HTTPS，禁止重定向到内网/回环/链路本地地址，限制响应字节数并校验实际图片 MIME 与 magic bytes。`b64_json` 也必须在解码后执行尺寸、格式和字节上限校验。任何校验失败都不得保存附件。
 
-#### Artifact 与视觉回验
+#### Artifact 与按需回验
 
 每个成功候选立即由 `ctx.attachments.saveImage()` 保存，计算 SHA-256 与真实尺寸，并记录生成 provenance。保存成功才视为生成成功；Provider 返回的临时 URL 不能直接暴露为长期结果。
 
-默认回验调用现有 `mindseye_read_image(attachmentId, query)`，但回验问题由 ME 根据生成 spec 构造，而不是把整段用户 prompt 机械复述。第一版只检查：
-
-1. 图像是否可读、尺寸与格式是否符合请求；
-2. 画面主体是否与 prompt 的核心对象一致；
-3. 是否出现用户未要求的可读文字或疑似水印。
-
-回验是质量信号，不会自动修改、裁剪或“擦除”图像。发现不合格候选时，工具应如实返回 QA 结果；调用方可以明确要求重新生成。若 Provider 按其产品政策加入水印，MindsEye 不尝试规避该政策。
+生成后不自动调用视觉模型做 QA：图片会直接渲染在会话里，用户自己判断质量；模型需要细看时按需调用 `mindseye_read_image(attachmentId, query)`。生成成功后自动挂载 MindsEye 视觉工具，保证纯文本轮里模型有可用的读图工具。
 
 对 README header、Logo 或 slogan 等品牌资产，生成模型只负责视觉底图和构图。文字、Logo、字距与对齐必须由确定性的 SVG/排版层完成后，再对最终合成图做一次回验；不得把品牌文字正确拼写的责任交给图片模型。
 
 #### 失败、成本与可观测性
 
 - 每次调用记录真实 provider、model、总延迟、每次 attempt 的错误类别和成功候选数；错误信息不回显密钥或完整 Provider 响应体。
-- 单个候选保存或回验失败不丢弃其他已保存候选；返回每张候选的独立状态。
-- 生成与回验是两段成本，`meta` 必须分别记录生成调用与视觉 QA 调用的 usage/latency，不能把 QA 成本误算为生成成本。
+- 单次生成只返回一张主候选；保存或探测失败时整体调用失败，由工具错误通道返回。
 - V2.5 不把生成结果写入 Nexus 的 OCR/layout 等“图片硬事实”记忆。生成 provenance 作为 artifact 元数据保存；只有用户随后主动分析或确认的事实才进入现有 evidence/analysis 记忆。
 
 #### 验收与测试
@@ -556,7 +546,7 @@ image.routes[]
 - 文本模型会话可以从一次已批准的调用得到可显示、可继续追问的附件；无论 Provider 返回 base64 还是 URL，保存后的结果都使用同一附件契约。
 - 主模型失败于可降级错误时，后备模型被调用；认证和参数错误不触发后备调用。
 - 所有输出带 provider/model/latency/attempts/request version，并且测试断言 API Key 不出现在输出或日志。
-- 覆盖 b64、URL 下载校验、异常响应、候选部分失败、附件保存失败、回验成功/不合格和无水印策略的单元测试。
+- 覆盖 b64、URL 下载校验、异常响应、候选部分失败、附件保存失败的单元测试。
 - 生成路由不进入读取意图分类，且在未配置图片生成路由时提供明确错误，不影响现有 `mindseye_read_image` 工具。
 
 ### V3：GUI 自动化与高级检索

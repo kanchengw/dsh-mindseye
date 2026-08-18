@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { generateImagesWithMindsEye } from '../src/image-tool.js'
+import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { ImageGenerationRoute } from '../src/types.js'
+import type { ImageGenerationToolInput } from '../src/image-tool.js'
 
 const route: ImageGenerationRoute = {
   model: 'image-model',
@@ -21,23 +23,27 @@ describe('generateImagesWithMindsEye', () => {
       provider: 'images.example',
       model: 'image-model',
       attempts: [{ provider: 'images.example', model: 'image-model', ok: true, latencyMs: 1 }],
+      usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
     }))
-    const saveImage = vi.fn(async () => ({ attachmentId: 'image-1' }))
-    const qa = vi.fn(async () => ({
-      text: 'The image is readable and depicts the requested subject.',
-      latencyMs: 1,
-      attempts: [],
-    }))
-
-    const result = await generateImagesWithMindsEye({ prompt: 'a coral red eye' }, {
+    const saveImage = vi.fn(async () => ({
+      attachmentId: 'image-1',
+      mediaType: 'image/png',
+      bytes: 8,
+      width: 10,
+      height: 20,
+    } as ImageAttachmentRef))
+    const result = await generateImagesWithMindsEye({
+      request: 'a coral red eye',
+      subject: '眼睛概念 logo',
+      context: '纯图形，严禁任何文字',
+    }, {
       generate,
       saveImage,
       probeImage: () => ({ width: 10, height: 20, format: 'png' }),
-      qa,
     }, [route])
 
     expect(generate).toHaveBeenCalledWith({
-      prompt: 'a coral red eye\n\nDo not include a watermark, signature, logo, or any unrelated readable text.',
+      prompt: '主题：眼睛概念 logo\n用户本次需求：a coral red eye\n上下文：纯图形，严禁任何文字',
       requestVersion: 'mindseye-image-generation-v1',
     }, [route], undefined)
     expect(saveImage).toHaveBeenCalledWith(expect.objectContaining({ data: png, mediaType: 'image/png' }))
@@ -47,54 +53,63 @@ describe('generateImagesWithMindsEye', () => {
       height: 20,
       format: 'png',
     })])
-    expect(result.meta.qa).toEqual([expect.objectContaining({
-      attachmentId: 'image-1',
-      text: 'The image is readable and depicts the requested subject.',
-    })])
+    expect(result.meta).toEqual({
+      provider: 'images.example',
+      model: 'image-model',
+      usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+    })
   })
 
-  it('keeps a saved candidate when a later candidate cannot be stored', async () => {
-    const result = await generateImagesWithMindsEye({ prompt: 'two eyes' }, {
-      generate: async () => ({
-        images: [
-          { data: png, mediaType: 'image/png' as const },
-          { data: png, mediaType: 'image/png' as const },
-        ],
-        provider: 'images.example',
-        model: 'image-model',
-        attempts: [],
-      }),
-      saveImage: vi.fn()
-        .mockResolvedValueOnce({ attachmentId: 'image-1' })
-        .mockRejectedValueOnce(new Error('attachment store unavailable')),
+  it('uses only the current request when no cross-turn context is provided', async () => {
+    const generate = vi.fn(async () => ({
+      images: [{ data: png, mediaType: 'image/png' as const }],
+      provider: 'images.example',
+      model: 'image-model',
+      attempts: [{ provider: 'images.example', model: 'image-model', ok: true, latencyMs: 1 }],
+    }))
+
+    await generateImagesWithMindsEye({
+      request: '线条简单一点',
+      subject: '眼睛概念 logo',
+    }, {
+      generate,
+      saveImage: vi.fn(async () => ({
+        attachmentId: 'image-1',
+        mediaType: 'image/png',
+        bytes: 8,
+        width: 10,
+        height: 20,
+      } as ImageAttachmentRef)),
       probeImage: () => ({ width: 10, height: 20, format: 'png' }),
     }, [route])
 
-    expect(result.images).toHaveLength(1)
-    expect(result.failures).toEqual([{
-      candidate: 2,
-      stage: 'save',
-      error: 'attachment store unavailable',
-    }])
+    expect(generate).toHaveBeenCalledWith({
+      prompt: '主题：眼睛概念 logo\n用户本次需求：线条简单一点',
+      requestVersion: 'mindseye-image-generation-v1',
+    }, [route], undefined)
   })
 
-  it('reports QA failures without discarding a saved candidate', async () => {
-    const result = await generateImagesWithMindsEye({ prompt: 'an eye' }, {
-      generate: async () => ({
-        images: [{ data: png, mediaType: 'image/png' as const }],
-        provider: 'images.example',
-        model: 'image-model',
-        attempts: [],
-      }),
-      saveImage: async () => ({ attachmentId: 'image-1' }),
-      probeImage: () => ({ width: 10, height: 20, format: 'png' }),
-      qa: async () => { throw new Error('vision route unavailable') },
-    }, [route])
+  it('rejects an empty request before calling the provider', async () => {
+    const generate = vi.fn()
 
-    expect(result.images).toHaveLength(1)
-    expect(result.meta.qa).toEqual([expect.objectContaining({
-      attachmentId: 'image-1',
-      text: 'QA unavailable: vision route unavailable',
-    })])
+    await expect(generateImagesWithMindsEye({ request: '   ', subject: '眼睛概念 logo' }, {
+      generate,
+      saveImage: vi.fn(),
+      probeImage: () => ({ width: 1, height: 1, format: 'png' }),
+    }, [route])).rejects.toThrow('request is required')
+
+    expect(generate).not.toHaveBeenCalled()
+  })
+
+  it('rejects a missing subject before calling the provider', async () => {
+    const generate = vi.fn()
+
+    await expect(generateImagesWithMindsEye({ request: '换个风格' } as unknown as ImageGenerationToolInput, {
+      generate,
+      saveImage: vi.fn(),
+      probeImage: () => ({ width: 1, height: 1, format: 'png' }),
+    }, [route])).rejects.toThrow('subject is required')
+
+    expect(generate).not.toHaveBeenCalled()
   })
 })

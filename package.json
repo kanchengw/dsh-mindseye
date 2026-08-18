@@ -1,6 +1,6 @@
 {
   "name": "dsh-mindseye",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "MindsEye: model-driven vision tools, structured evidence, and exact cache for DeepSeek Harness",
   "type": "module",
   "private": false,

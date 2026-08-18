@@ -6,12 +6,15 @@
 
 > 让 DeepSeek 原生看图 —— model-driven vision tools for DeepSeek Harness
 
+当前版本：0.2.2
+
 MindsEye 是一个 DeepSeek Harness（dsh）vision 插件。粘贴图片后，图片原样显示在会话里，DeepSeek 继续负责思考，视觉模型负责看图。插件暴露一组按任务拆分的视觉工具，由模型根据用户意图选择工具，每个工具固定映射到对应的意图和模型路由，返回结构化 JSON，并通过缓存与证据复用减少重复开销。
 
 ## 核心体验
 
 - **粘贴即看图**：接管 `deepseek-official` 路由，图片原生进入会话；接管不可用时自动降级为路径粘贴，新图始终能发出去
 - **模型选工具，插件管模型**：`mindseye_read_image`、`mindseye_ocr`、`mindseye_ground`、`mindseye_colors` 各自固定意图，模型按用户问题选工具，插件按工具映射到对应的模型链
+- **生图即所见**：`mindseye_generate_image` 委托专用图片生成模型，结果作为 dsh 附件直接显示在会话中，不自动保存、不自动回验
 - **图片轮自动挂载**：检测到图片消息时自动注册视觉工具；纯文本轮默认只保留一个激活入口，避免常驻占用模型上下文
 - **多图一次读**：批量读取多张图片，批量遇 4xx 按指数拆分降级，失败只影响单张
 - **旧会话不毒化**：历史带图会话在回退模式下也能正常对话，图片块自动替换为附件标记
@@ -39,6 +42,13 @@ MindsEye 是一个 DeepSeek Harness（dsh）vision 插件。粘贴图片后，�
 - 结构化 JSON：`images` / `evidence` / `answer` / `meta`，`meta` 含真实 token usage、调用尝试与回退标记
 - 精确缓存：图片 sha256 + 归一化问题 + region + baseUrl + model + prompt 版本，命中时不再调用视觉模型
 
+### 图片生成
+
+- `mindseye_generate_image(subject, context?)`：文本模型按用户要求委托专用图片生成模型
+- `request` 由插件自动读取用户最新消息原文，模型不提供、不改写；`subject` 必填，由模型从对话提取主体；`context` 可选，只补风格或约束背景
+- 生成结果作为 dsh 附件直接显示在会话中，附带 `(token_usage=..., 宽x高, 大小)` 审计行
+- 支持 OpenAI-compatible `/images/generations`，`b64_json` 或下载型 URL 均校验后落为附件；不自动保存到项目路径，不自动调用视觉工具回验
+
 ### Provider
 
 - OpenAI-compatible Chat Completions 与 Responses 协议
@@ -49,7 +59,7 @@ MindsEye 是一个 DeepSeek Harness（dsh）vision 插件。粘贴图片后，�
 
 - 图片级硬事实按 sha256 持久化，evidence 按容量 LRU 淘汰（默认 1000 条）
 - 软记忆 BM25 检索历史问答注入上下文，历史问答按容量滚动淘汰（默认 1000 条）
-- `mindseye_memory_put / get / search / diff` 四个 dsh 工具，调用走审批与审计
+- `mindseye_memory_put / get / search / diff` 四个 dsh 工具，调用在会话中可见，并记录审计
 
 ### 数据处理与安全边界
 

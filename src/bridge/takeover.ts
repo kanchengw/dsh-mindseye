@@ -34,24 +34,73 @@ export function registerHistorySanitizer(
     next: () => AsyncIterable<StreamChunk>,
   ): AsyncIterable<StreamChunk> => {
     const messages = options.messages as unknown as MessageLike[]
-    if (options.provider !== DEEPSEEK_PROVIDER || !messagesContainImage(messages)) {
-      return next()
-    }
+    if (!messagesContainImage(messages)) return next()
     for (const ref of collectImageRefs(messages)) {
       const id = String(ref.attachmentId ?? ref.id ?? '')
       if (id !== '') imageRefs.set(id, ref)
     }
-    const sanitized = sanitizeMessages(messages)
-    if (messagesContainImage(sanitized)) return next()
     const llm = ctx.get('llm') as
-      | { stream: (options: GenerateOptions) => AsyncIterable<StreamChunk> }
+      | {
+          stream: (options: GenerateOptions) => AsyncIterable<StreamChunk>
+          resolveModelInfo: (provider: string, model: string) => Promise<{
+            inputModalities?: readonly string[]
+          }>
+        }
       | undefined
     if (llm === undefined) return next()
-    return llm.stream({
+    return routeSanitizedStream(ctx, options, messages, next, llm)
+  })
+}
+
+async function* routeSanitizedStream(
+  ctx: Context,
+  options: GenerateOptions,
+  messages: MessageLike[],
+  next: () => AsyncIterable<StreamChunk>,
+  llm: {
+    stream: (options: GenerateOptions) => AsyncIterable<StreamChunk>
+    resolveModelInfo: (provider: string, model: string) => Promise<{
+      inputModalities?: readonly string[]
+    }>
+  },
+): AsyncIterable<StreamChunk> {
+  const supportsImage = await resolveSupportsImage(llm, options.provider, options.model)
+  if (supportsImage) {
+    yield* next()
+    return
+  }
+  const sanitized = sanitizeMessages(messages)
+  if (!messagesContainImage(sanitized)) {
+    ctx.logger?.info(
+      'mindseye: rewrote image blocks for text-only model %s/%s',
+      options.provider,
+      options.model,
+    )
+    yield* llm.stream({
       ...options,
       messages: sanitized as unknown as typeof options.messages,
     })
-  })
+    return
+  }
+  yield* next()
+}
+
+async function resolveSupportsImage(
+  llm: {
+    resolveModelInfo: (provider: string, model: string) => Promise<{
+      inputModalities?: readonly string[]
+    }>
+  },
+  provider: string,
+  model: string,
+): Promise<boolean> {
+  try {
+    const info = await llm.resolveModelInfo(provider, model)
+    return Array.isArray(info.inputModalities) && info.inputModalities.includes('image')
+  } catch {
+    // Unknown route: fail safe and sanitize for the text bridge.
+    return false
+  }
 }
 
 export interface TakeoverOptions {

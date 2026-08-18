@@ -1,34 +1,11 @@
 import type { Context } from '@deepseek-ai/cordis'
-import { defineTool, type PreToolDecision } from '@deepseek-ai/dsh-tools'
+import { defineTool } from '@deepseek-ai/dsh-tools'
 import { deepEqualJson } from '@deepseek-ai/dsh-settings'
 import type { JsonValue } from '@deepseek-ai/dsh-tools'
 import { evidenceToRecord } from './evidence.js'
 import type { JsonlMemoryStore } from './store.js'
 import type { VisualEvidenceRecord } from './types.js'
 import type { VisualEvidence } from '../types.js'
-
-export const MEMORY_TOOL_NAMES = [
-  'mindseye_memory_put',
-  'mindseye_memory_get',
-  'mindseye_memory_search',
-  'mindseye_memory_diff',
-] as const
-
-const MEMORY_TOOL_SET = new Set<string>(MEMORY_TOOL_NAMES)
-
-export function memoryApprovalReason(name: string): string {
-  return name === 'mindseye_memory_put'
-    ? '写入 MindsEye 视觉记忆'
-    : '读取 MindsEye 视觉记忆'
-}
-
-export async function memoryApprovalGate(
-  exec: { name: string },
-  next: () => Promise<PreToolDecision>,
-): Promise<PreToolDecision> {
-  if (!MEMORY_TOOL_SET.has(exec.name)) return next()
-  return { kind: 'ask', reason: memoryApprovalReason(exec.name) }
-}
 
 export function createMemoryTools(store: JsonlMemoryStore) {
   return [
@@ -180,5 +157,4 @@ function normalizeEvidenceRecord(sha256: string, raw: unknown): VisualEvidenceRe
 
 export function registerMemoryTools(ctx: Context, store: JsonlMemoryStore): void {
   for (const tool of createMemoryTools(store)) ctx.tools.register(tool)
-  ctx.on('tools/pre-execute', (exec, next) => memoryApprovalGate(exec, next))
 }

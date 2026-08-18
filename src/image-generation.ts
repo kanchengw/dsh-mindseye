@@ -7,6 +7,7 @@ import type {
   ImageGenerationAttempt,
   ImageGenerationRoute,
   ImageGenerationSpec,
+  TokenUsage,
 } from './types.js'
 
 export type ImageGenerationErrorKind =
@@ -48,12 +49,13 @@ export interface ImageGenerationChainResult {
   provider: string
   model: string
   attempts: ImageGenerationAttempt[]
+  usage?: TokenUsage
 }
 
 export async function callImageGenerationProvider(
   options: ImageGenerationProviderOptions,
   fetchImpl: typeof fetch = fetch,
-): Promise<{ images: GeneratedImage[] }> {
+): Promise<{ images: GeneratedImage[]; usage?: TokenUsage }> {
   const response = await fetchImpl(
     `${options.route.baseUrl.replace(/\/$/, '')}/images/generations`,
     {
@@ -77,7 +79,8 @@ export async function callImageGenerationProvider(
   if (images.length === 0) {
     throw new ImageGenerationProviderError('invalid-input', 'image provider returned no images')
   }
-  return { images }
+  const usage = imageUsageOf(body)
+  return { images, ...(usage === undefined ? {} : { usage }) }
 }
 
 export async function runImageGenerationChain(
@@ -243,6 +246,28 @@ function mediaTypeOf(data: Uint8Array): GeneratedImageMediaType {
   if (data.length >= 12 && data[0] === 0x52 && data[1] === 0x49 && data[2] === 0x46 && data[3] === 0x46 && data[8] === 0x57 && data[9] === 0x45 && data[10] === 0x42 && data[11] === 0x50) return 'image/webp'
   if (data.length >= 6 && ['GIF87a', 'GIF89a'].includes(Buffer.from(data.subarray(0, 6)).toString('ascii'))) return 'image/gif'
   throw new ImageGenerationProviderError('invalid-input', 'image provider returned an unsupported image format')
+}
+
+function imageUsageOf(body: Record<string, unknown>): TokenUsage | undefined {
+  if (body.usage === null || typeof body.usage !== 'object' || Array.isArray(body.usage)) return undefined
+  const usage = body.usage as Record<string, unknown>
+  const inputTokens = tokenCountOf(usage, 'prompt_tokens', 'input_tokens')
+  const outputTokens = tokenCountOf(usage, 'completion_tokens', 'output_tokens')
+  const totalTokens = tokenCountOf(usage, 'total_tokens')
+  if (inputTokens === undefined && outputTokens === undefined && totalTokens === undefined) return undefined
+  return {
+    ...(inputTokens === undefined ? {} : { inputTokens }),
+    ...(outputTokens === undefined ? {} : { outputTokens }),
+    ...(totalTokens === undefined ? {} : { totalTokens }),
+  }
+}
+
+function tokenCountOf(usage: Record<string, unknown>, ...names: string[]): number | undefined {
+  for (const name of names) {
+    const value = usage[name]
+    if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) return value
+  }
+  return undefined
 }
 
 function isRetryableImageGenerationError(error: unknown): boolean {

@@ -63,6 +63,21 @@ describe('callImageGenerationProvider', () => {
     expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ redirect: 'error' })
   })
 
+  it('normalizes provider usage into the generation result', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      data: [{ b64_json: pngBase64 }],
+      usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+    }))
+
+    const result = await callImageGenerationProvider({
+      route,
+      apiKey: 'secret',
+      spec: { prompt: 'a precise image', requestVersion: 'v1' },
+    }, fetchMock as unknown as typeof fetch)
+
+    expect(result.usage).toEqual({ inputTokens: 10, outputTokens: 5, totalTokens: 15 })
+  })
+
   it('rejects non-HTTPS provider image URLs before downloading them', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
       data: [{ url: 'http://127.0.0.1/image.png' }],

@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { createMemoryTools, diffEvidence, memoryApprovalGate } from '../src/memory/tools.js'
+import { createMemoryTools, diffEvidence } from '../src/memory/tools.js'
 import { JsonlMemoryStore } from '../src/memory/store.js'
 import type { VisualAnalysisRecord, VisualEvidenceRecord } from '../src/memory/types.js'
 
@@ -126,27 +126,6 @@ describe('memory tools', () => {
     }
     expect(same).toEqual({ changed: false, fields: {} })
     await store.close()
-  })
-})
-
-describe('memory approval gate', () => {
-  it('asks for every memory tool', async () => {
-    const gate = (name: string) => memoryApprovalGate(
-      { name },
-      async () => ({ kind: 'allow' } as const),
-    )
-    await expect(gate('mindseye_memory_put')).resolves.toMatchObject({ kind: 'ask' })
-    await expect(gate('mindseye_memory_get')).resolves.toMatchObject({ kind: 'ask' })
-    await expect(gate('mindseye_memory_search')).resolves.toMatchObject({ kind: 'ask' })
-    await expect(gate('mindseye_memory_diff')).resolves.toMatchObject({ kind: 'ask' })
-  })
-
-  it('delegates non-memory tools to the next gate', async () => {
-    const result = await memoryApprovalGate(
-      { name: 'mindseye_read_image' },
-      async () => ({ kind: 'allow' } as const),
-    )
-    expect(result).toEqual({ kind: 'allow' })
   })
 })
 

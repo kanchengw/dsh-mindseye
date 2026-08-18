@@ -147,6 +147,7 @@ export interface VisionResult {
 export interface VisionReadOptions {
   path?: string
   attachmentId?: string
+  agent?: unknown
   intent?: VisionIntent
   query?: string
   region?: string

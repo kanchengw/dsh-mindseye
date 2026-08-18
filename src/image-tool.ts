@@ -1,4 +1,5 @@
 import { fingerprintBytes } from './evidence.js'
+import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type {
   GeneratedImageMediaType,
   ImageGenerationAttempt,
@@ -8,14 +9,16 @@ import type {
 } from './types.js'
 
 export const IMAGE_GENERATION_REQUEST_VERSION = 'mindseye-image-generation-v1'
-const NO_WATERMARK_INSTRUCTION = 'Do not include a watermark, signature, logo, or any unrelated readable text.'
 
 export interface ImageGenerationToolInput {
-  prompt: string
+  request: string
+  subject: string
+  context?: string
 }
 
 export interface SavedGeneratedImage {
   attachmentId: string
+  attachment: ImageAttachmentRef
   sha256: string
   width: number
   height: number
@@ -24,33 +27,11 @@ export interface SavedGeneratedImage {
 
 export interface ImageGenerationToolResult {
   images: SavedGeneratedImage[]
-  failures: Array<{ candidate: number; stage: 'probe' | 'save'; error: string }>
   meta: {
     provider: string
     model: string
-    latencyMs: number
-    attempts: ImageGenerationAttempt[]
-    requestVersion: string
-    source: 'generated'
-    qa: Array<GeneratedImageQa & { attachmentId: string }>
-  }
-}
-
-export interface GeneratedImageQa {
-  text: string
-  latencyMs: number
-  attempts: Array<{
-    provider: string
-    model: string
-    ok: boolean
-    latencyMs: number
-    error?: string
     usage?: TokenUsage
-  }>
-  provider?: string
-  model?: string
-  usage?: TokenUsage
-  skipped?: boolean
+  }
 }
 
 export interface ImageGenerationToolDeps {
@@ -63,14 +44,14 @@ export interface ImageGenerationToolDeps {
     provider: string
     model: string
     attempts: ImageGenerationAttempt[]
+    usage?: TokenUsage
   }>
   saveImage: (input: {
     data: Uint8Array
     mediaType: GeneratedImageMediaType
     name?: string
-  }) => Promise<{ attachmentId: string }>
+  }) => Promise<ImageAttachmentRef>
   probeImage: (bytes: Uint8Array) => { width: number; height: number; format: string }
-  qa?: (input: { attachmentId: string; prompt: string }, signal?: AbortSignal) => Promise<GeneratedImageQa>
 }
 
 export async function generateImagesWithMindsEye(
@@ -80,80 +61,50 @@ export async function generateImagesWithMindsEye(
   signal?: AbortSignal,
 ): Promise<ImageGenerationToolResult> {
   const spec = normalizeImageGenerationSpec(input, routes)
-  const started = Date.now()
   const generated = await deps.generate(spec, routes, signal)
   const images: SavedGeneratedImage[] = []
-  const failures: ImageGenerationToolResult['failures'] = []
-  const qa: Array<GeneratedImageQa & { attachmentId: string }> = []
   for (const [index, image] of generated.images.entries()) {
-    let dimensions: { width: number; height: number; format: string }
-    try {
-      dimensions = deps.probeImage(image.data)
-    } catch (error) {
-      failures.push({ candidate: index + 1, stage: 'probe', error: errorMessage(error) })
-      continue
-    }
-    try {
-      const saved = await deps.saveImage({
-        data: image.data,
-        mediaType: image.mediaType,
-        name: `mindseye-generated-${index + 1}.${image.mediaType.slice('image/'.length)}`,
-      })
-      images.push({
-        attachmentId: saved.attachmentId,
-        sha256: fingerprintBytes(image.data),
-        width: dimensions.width,
-        height: dimensions.height,
-        format: dimensions.format,
-      })
-      if (deps.qa !== undefined) {
-        try {
-          qa.push({
-            attachmentId: saved.attachmentId,
-            ...(await deps.qa({ attachmentId: saved.attachmentId, prompt: spec.prompt }, signal)),
-          })
-        } catch (error) {
-          qa.push({
-            attachmentId: saved.attachmentId,
-            text: `QA unavailable: ${errorMessage(error)}`,
-            latencyMs: 0,
-            attempts: [],
-          })
-        }
-      }
-    } catch (error) {
-      failures.push({ candidate: index + 1, stage: 'save', error: errorMessage(error) })
-    }
+    const dimensions = deps.probeImage(image.data)
+    const saved = await deps.saveImage({
+      data: image.data,
+      mediaType: image.mediaType,
+      name: `mindseye-generated-${index + 1}.${image.mediaType.slice('image/'.length)}`,
+    })
+    images.push({
+      attachmentId: saved.attachmentId,
+      attachment: saved,
+      sha256: fingerprintBytes(image.data),
+      width: dimensions.width,
+      height: dimensions.height,
+      format: dimensions.format,
+    })
   }
   return {
     images,
-    failures,
     meta: {
       provider: generated.provider,
       model: generated.model,
-      latencyMs: Date.now() - started,
-      attempts: generated.attempts,
-      requestVersion: spec.requestVersion,
-      source: 'generated',
-      qa,
+      ...(generated.usage === undefined ? {} : { usage: generated.usage }),
     },
   }
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
 
 function normalizeImageGenerationSpec(
   input: ImageGenerationToolInput,
   routes: ImageGenerationRoute[],
 ): ImageGenerationSpec {
-  const prompt = input.prompt.trim()
-  if (prompt === '') throw new Error('mindseye_generate_image: prompt is required')
-  if (prompt.length > 4_000) throw new Error('mindseye_generate_image: prompt exceeds 4000 characters')
   if (routes.length === 0) throw new Error('mindseye_generate_image: no image generation route configured')
+  const request = input.request.trim()
+  if (request === '') throw new Error('mindseye_generate_image: request is required')
+  const subject = input.subject?.trim() ?? ''
+  if (subject === '') throw new Error('mindseye_generate_image: subject is required')
+  const context = input.context?.trim() ?? ''
+  const prompt = context === ''
+    ? `主题：${subject}\n用户本次需求：${request}`
+    : `主题：${subject}\n用户本次需求：${request}\n上下文：${context}`
+  if (prompt.length > 4_000) throw new Error('mindseye_generate_image: combined request and context exceeds 4000 characters')
   return {
-    prompt: `${prompt}\n\n${NO_WATERMARK_INSTRUCTION}`,
+    prompt,
     requestVersion: IMAGE_GENERATION_REQUEST_VERSION,
   }
 }

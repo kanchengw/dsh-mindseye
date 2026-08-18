@@ -14,7 +14,7 @@ import type { SoftMemoryHit, SoftMemoryQuery, VisualEvidenceRecord } from './mem
 export const PROMPT_VERSION = 'mindseye-v1'
 
 export interface CreateVisionToolDeps {
-  readImage: (input: { path?: string; attachmentId?: string }) => Promise<Uint8Array>
+  readImage: (input: { path?: string; attachmentId?: string; agent?: unknown }) => Promise<Uint8Array>
   probeImage: (bytes: Uint8Array) => Promise<{ width: number; height: number; format: string }>
   cache?: {
     get: (key: string) => VisionResult | undefined
@@ -36,7 +36,7 @@ export interface CreateVisionToolDeps {
 }
 
 export interface CreateBatchVisionToolDeps {
-  readImage: (input: { path?: string; attachmentId?: string }) => Promise<Uint8Array>
+  readImage: (input: { path?: string; attachmentId?: string; agent?: unknown }) => Promise<Uint8Array>
   probeImage: (bytes: Uint8Array) => Promise<{ width: number; height: number; format: string }>
   cache?: {
     get: (key: string) => VisionResult | undefined
@@ -70,6 +70,7 @@ export async function readImageWithMindsEye(
   const bytes = await deps.readImage({
     path: options.path,
     attachmentId: options.attachmentId,
+    agent: options.agent,
   })
   const sha256 = fingerprintBytes(bytes)
   const image = buildImageInfo({ ...(await deps.probeImage(bytes)), sha256, path: options.path })
@@ -205,6 +206,7 @@ export async function readImageWithMindsEye(
 
 export interface BatchReadOptions {
   attachmentIds: string[]
+  agent?: unknown
   intent: VisionIntent
   query?: string
   region?: string
@@ -227,7 +229,7 @@ export async function readImagesWithMindsEye(
   const matchedEvidenceIds: string[] = []
   const infoBySha = new Map<string, { width: number; height: number; format: string }>()
   for (const id of options.attachmentIds) {
-    const bytes = await deps.readImage({ attachmentId: id })
+    const bytes = await deps.readImage({ attachmentId: id, agent: options.agent })
     const sha256 = fingerprintBytes(bytes)
     const info = buildImageInfo({ ...(await deps.probeImage(bytes)), sha256, path: undefined })
     images.push(info)

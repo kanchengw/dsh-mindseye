@@ -730,10 +730,142 @@ function SettingsCard() {
   ])
 }
 
-export const inject = ['slots']
+export const inject = ['slots', 'sessions']
 
 export function apply(ctx) {
   installStyle(ctx)
+  const generatedImageUrls = new Map()
+  const objectUrls = new Set()
+  const loadGeneratedImageUrl = async (sessionId, attachment) => {
+    const key = `${sessionId}:${attachment.attachmentId}`
+    const cached = generatedImageUrls.get(key)
+    if (cached !== undefined) return cached
+    const pending = (async () => {
+      const binding = ctx.sessions.binding(sessionId)
+      if (binding === undefined) throw new Error('mindseye: unknown session')
+      const result = await binding.session.readAttachment(attachment.attachmentId)
+      if (!result.ok) throw new Error(`mindseye: ${result.error.code}: ${result.error.message}`)
+      const ref = result.value.attachment
+      const data = result.value.data
+      if (typeof URL.createObjectURL === 'function') {
+        const url = URL.createObjectURL(new Blob([data], { type: ref.mediaType }))
+        objectUrls.add(url)
+        return url
+      }
+      let binary = ''
+      const chunk = 0x8000
+      for (let offset = 0; offset < data.length; offset += chunk) {
+        binary += String.fromCharCode(...data.subarray(offset, offset + chunk))
+      }
+      return `data:${ref.mediaType};base64,${btoa(binary)}`
+    })().catch((error) => {
+      generatedImageUrls.delete(key)
+      throw error
+    })
+    generatedImageUrls.set(key, pending)
+    return pending
+  }
+  function GeneratedImage(props) {
+    const { sessionId, attachment } = props
+    const [url, setUrl] = useState(undefined)
+    const [error, setError] = useState(undefined)
+    useEffect(() => {
+      let alive = true
+      loadGeneratedImageUrl(sessionId, attachment)
+        .then((next) => {
+          if (alive) setUrl(next)
+        })
+        .catch((caught) => {
+          if (alive) setError(caught instanceof Error ? caught.message : String(caught))
+        })
+      return () => {
+        alive = false
+      }
+    }, [sessionId, attachment.attachmentId])
+    if (error !== undefined) {
+      return React.createElement('span', { style: { fontSize: 12, color: 'var(--dsw-alias-label-error)' } }, `图片加载失败：${error}`)
+    }
+    if (url === undefined) {
+      return React.createElement('span', { style: { fontSize: 12, color: 'var(--dsw-alias-label-tertiary)' } }, '图片加载中…')
+    }
+    return React.createElement('img', {
+      src: url,
+      alt: attachment.name ?? '生成的图片',
+      style: { maxWidth: '100%', maxHeight: 480, borderRadius: 8, objectFit: 'contain', display: 'block' },
+    })
+  }
+  function GeneratedImageCard(props) {
+    const { toolName, block, sessionId } = props
+    const content = Array.isArray(block && block.resultView && block.resultView.content)
+      ? block.resultView.content
+      : Array.isArray(block && block.content)
+        ? block.content
+        : []
+    const images = content.filter((item) => item && item.type === 'image' && item.attachment)
+    const annotation = content.find((item) =>
+      item && item.type === 'text' && typeof item.text === 'string' && item.text.startsWith('('))
+    let argsJson = ''
+    const callViewRaw = block && block.callView && block.callView.rawInput
+    if (callViewRaw !== undefined) {
+      argsJson = JSON.stringify(callViewRaw, null, 2)
+    } else {
+      const argsRaw = block && (block.arguments ?? block.call?.argsRaw ?? block.argsRaw)
+      if (typeof argsRaw === 'string' && argsRaw !== '') {
+        try {
+          const parsed = JSON.parse(argsRaw)
+          if (parsed && typeof parsed === 'object') {
+            delete parsed.request
+          }
+          argsJson = JSON.stringify(parsed, null, 2)
+        } catch {
+          argsJson = argsRaw
+        }
+      }
+    }
+    const label = { fontSize: 11, fontWeight: 600, color: 'var(--dsw-alias-label-secondary)', marginBottom: 4 }
+    const mono = {
+      margin: 0,
+      font: '12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace',
+      whiteSpace: 'pre-wrap',
+      wordBreak: 'break-word',
+      color: 'var(--dsw-alias-label-secondary)',
+    }
+    return React.createElement('div', {
+      style: { display: 'grid', gap: 10, padding: '10px 12px', borderRadius: 8, background: 'var(--dsw-alias-bg-layer-2, rgba(128,128,128,.04))' },
+    }, [
+      React.createElement('div', { key: 'head', style: { fontSize: 13, fontWeight: 600, color: 'var(--dsw-alias-label-primary)' } },
+        toolName ?? 'mindseye_generate_image'),
+      argsJson === ''
+        ? null
+        : React.createElement('div', { key: 'in', style: { display: 'grid', gap: 4 } }, [
+          React.createElement('span', { key: 'label', style: label }, 'IN'),
+          React.createElement('pre', { key: 'json', style: mono }, argsJson),
+        ]),
+      images.length === 0
+        ? null
+        : React.createElement('div', { key: 'out', style: { display: 'grid', gap: 6 } }, [
+          React.createElement('span', { key: 'label', style: label }, 'OUT'),
+          React.createElement('div', { key: 'body', style: { display: 'grid', gap: 8 } }, [
+            ...images.map(({ attachment }) => React.createElement(GeneratedImage, {
+              key: String(attachment.attachmentId),
+              sessionId,
+              attachment,
+            })),
+            annotation === undefined
+              ? null
+              : React.createElement('span', {
+                key: 'meta',
+                style: { fontSize: 12, color: 'var(--dsw-alias-label-tertiary)', fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace' },
+              }, annotation.text),
+          ]),
+        ]),
+    ])
+  }
+  ctx.effect(() => () => {
+    for (const url of objectUrls) URL.revokeObjectURL(url)
+    objectUrls.clear()
+    generatedImageUrls.clear()
+  }, 'dsh-mindseye: generated image urls')
   if (typeof document !== 'undefined') {
     document.addEventListener('paste', onPasteCapture, true)
     document.addEventListener('focusin', onFocusCapture, true)
@@ -750,5 +882,13 @@ export function apply(ctx) {
       order: 30,
       label: () => 'MindsEye',
     }, SettingsCard)
+  )
+  ctx.slots.inject('tool.call.toolview', () =>
+    ctx.slots.register({
+      name: 'tool.call.toolview',
+      key: 'mindseye_generate_image',
+      priority: -10,
+      inject: () => ({}),
+    }, GeneratedImageCard)
   )
 }

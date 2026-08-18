@@ -14,9 +14,11 @@ import { runProviderChain, runVisionBatchChain, type BatchVisionResult } from '.
 import { registerHistorySanitizer, runTakeover } from './bridge/takeover.js'
 import { registerPasteRoute } from './bridge/paste.js'
 import { messagesContainImage, type ImageAttachmentLike } from './bridge/sanitize.js'
+import { sanitizeSessionSurface } from './bridge/session-surface.js'
+import { sessionAttachmentOf } from './bridge/session-attachment.js'
 import { readImageWithMindsEye, readImagesWithMindsEye } from './tool.js'
 import { runImageGenerationChain } from './image-generation.js'
-import { createImageGenerationTool, imageGenerationApprovalGate } from './image-tools.js'
+import { createImageGenerationTool } from './image-tools.js'
 import type { RouteKind, TokenUsage, VisionAnalysis, VisionIntent, VisionResult, VisionRoute } from './types.js'
 import { probeDimensions } from './bridge/image-meta.js'
 import { JsonlMemoryStore } from './memory/store.js'
@@ -112,15 +114,32 @@ export async function apply(ctx: Context, config: MindsEyeConfig = {}): Promise<
   registerMetricsRoute(ctx, () => metrics, () => memoryStore)
   if (memoryStore !== undefined) registerMemoryTools(ctx, memoryStore)
 
-  const readImage = async (input: { path?: string; attachmentId?: string }): Promise<Uint8Array> => {
+  const readImage = async (input: {
+    path?: string
+    attachmentId?: string
+    agent?: unknown
+  }): Promise<Uint8Array> => {
     if (input.attachmentId !== undefined) {
       const ref = imageRefs.get(input.attachmentId)
+        ?? (input.agent === undefined
+          ? undefined
+          : sessionAttachmentOf(input.agent, input.attachmentId))
       const attachments = ctx.get('attachments') as
         | { readImage: (ref: unknown) => Promise<{ data: Uint8Array }> }
         | undefined
       if (ref === undefined || attachments === undefined) {
+        if (
+          input.attachmentId.includes('/')
+          || input.attachmentId.includes('\\')
+          || /\.(png|jpe?g|webp|gif)$/i.test(input.attachmentId)
+        ) {
+          throw new Error(
+            `mindseye: ${input.attachmentId} 看起来是本地文件路径；本地路径请用 path 参数，附件 id 形如 sha256:...`,
+          )
+        }
         throw new Error(`mindseye: attachment ${input.attachmentId} is not available to the vision bridge`)
       }
+      imageRefs.set(input.attachmentId, ref)
       const stored = await attachments.readImage(ref)
       return stored.data
     }
@@ -153,52 +172,11 @@ export async function apply(ctx: Context, config: MindsEyeConfig = {}): Promise<
     data: Uint8Array
     mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
     name?: string
-  }): Promise<{ attachmentId: string }> => {
+  }): Promise<ImageAttachmentRef> => {
     const ref: ImageAttachmentRef = await ctx.attachments.saveImage(input)
     const attachmentId = String(ref.attachmentId)
     imageRefs.set(attachmentId, ref)
-    return { attachmentId }
-  }
-
-  const qaGeneratedImage = async (
-    input: { attachmentId: string; prompt: string },
-    signal?: AbortSignal,
-  ) => {
-    const routes = resolveRoutes({
-      routes: currentConfig.routes ?? {},
-      fallbacks: currentConfig.fallbacks,
-    }, 'understand')
-    if (routes.length === 0) {
-      return {
-        text: 'QA skipped: no understand vision route configured.',
-        latencyMs: 0,
-        attempts: [],
-        skipped: true,
-      }
-    }
-    const started = Date.now()
-    const bytes = await readImage({ attachmentId: input.attachmentId })
-    const image = await probeImage(bytes)
-    const qaQuery = [
-      'Check that this generated image is readable and plausibly matches the requested scene.',
-      'Identify unexpected readable text or a suspected watermark.',
-      `Requested scene: ${input.prompt}`,
-    ].join(' ')
-    const result = await runProviderChain({
-      routes,
-      dataUrl: toDataUrl(bytes, image.format),
-      prompt: buildPrompt('visual-qa', qaQuery),
-      resolveApiKey,
-      signal,
-    })
-    return {
-      text: result.analysis.text,
-      provider: result.provider,
-      model: result.model,
-      latencyMs: Date.now() - started,
-      attempts: result.attempts,
-      ...(result.usage === undefined ? {} : { usage: result.usage }),
-    }
+    return ref
   }
 
   const toolServices: VisionToolServices = {
@@ -235,23 +213,6 @@ export async function apply(ctx: Context, config: MindsEyeConfig = {}): Promise<
     buildBatchPrompt,
     metrics,
   }
-
-  ctx.tools.register(createImageGenerationTool({
-    routes: () => currentConfig.image?.routes ?? [],
-    generate: (spec, routes, signal) => runImageGenerationChain({
-      routes,
-      spec,
-      resolveApiKey,
-      signal,
-    }),
-    saveImage: saveGeneratedImage,
-    probeImage: (bytes) => {
-      const format = sniffFormat(bytes)
-      return { ...probeDimensions(bytes, format), format }
-    },
-    qa: qaGeneratedImage,
-  }))
-  ctx.on('tools/pre-execute', (exec, next) => imageGenerationApprovalGate(exec, next))
 
   const readImageTool = defineTool({
     name: config.toolName ?? 'mindseye_read_image',
@@ -383,6 +344,28 @@ export async function apply(ctx: Context, config: MindsEyeConfig = {}): Promise<
     visionToolsActive = false
   }, 'mindseye: vision tools')
 
+  ctx.tools.register(createImageGenerationTool({
+    routes: () => currentConfig.image?.routes ?? [],
+    generate: (spec, routes, signal) => runImageGenerationChain({
+      routes,
+      spec,
+      resolveApiKey,
+      signal,
+    }),
+    saveImage: saveGeneratedImage,
+    probeImage: (bytes) => {
+      const format = sniffFormat(bytes)
+      return { ...probeDimensions(bytes, format), format }
+    },
+    onGenerated: () => {
+      try {
+        activateVisionTools()
+      } catch {
+        // Vision tools are best-effort after generation so the model can inspect the result on demand.
+      }
+    },
+  }))
+
   ctx.tools.register(defineTool({
     name: 'mindseye_vision_activate',
     description:
@@ -410,6 +393,11 @@ export async function apply(ctx: Context, config: MindsEyeConfig = {}): Promise<
     if (decision !== null && typeof decision === 'object' && (decision as any).kind === 'reject') {
       return decision
     }
+    try {
+      sanitizeSessionSurface(payload?.agent?.session)
+    } catch (error) {
+      ctx.logger?.warn('mindseye: failed to shadow-sanitize the session surface', error)
+    }
     if (Array.isArray(payload?.messages) && messagesContainImage(payload.messages)) {
       try {
         activateVisionTools()
@@ -430,7 +418,7 @@ interface VisionToolSpec {
 }
 
 interface VisionToolServices {
-  readImage: (input: { path?: string; attachmentId?: string }) => Promise<Uint8Array>
+  readImage: (input: { path?: string; attachmentId?: string; agent?: unknown }) => Promise<Uint8Array>
   probeImage: (bytes: Uint8Array) => Promise<{ width: number; height: number; format: string }>
   toDataUrl: (bytes: Uint8Array, format: string) => string
   memory?: JsonlMemoryStore
@@ -548,7 +536,7 @@ interface VisionToolArgs {
 async function runVisionTool(
   spec: VisionToolSpec,
   args: VisionToolArgs,
-  exec: { signal: AbortSignal },
+  exec: { signal: AbortSignal; agent?: unknown },
   services: VisionToolServices,
 ): Promise<VisionResult> {
   const active = services.currentConfig()
@@ -574,6 +562,7 @@ async function runVisionTool(
     const batchResult = await readImagesWithMindsEye(
       {
         attachmentIds: ids,
+        agent: exec.agent,
         intent: spec.intent,
         query: args.query,
         region: args.region,
@@ -603,6 +592,7 @@ async function runVisionTool(
     {
       path: args.path,
       attachmentId: args.attachmentId,
+      agent: exec.agent,
       intent: spec.intent,
       query: args.query,
       region: args.region,
