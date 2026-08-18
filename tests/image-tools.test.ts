@@ -21,7 +21,7 @@ describe('image generation tool', () => {
       probeImage: () => ({ width: 1, height: 1, format: 'png' }),
     })
 
-    await expect(tool.execute({ prompt: 'a red eye', size: '1024x1024' }, {} as never))
+    await expect(tool.execute({ prompt: 'a red eye' }, {} as never))
       .rejects.toThrow('no image generation route configured')
     expect(generate).not.toHaveBeenCalled()
   })
@@ -40,7 +40,7 @@ describe('image generation tool', () => {
       qa: async ({ attachmentId }) => ({ text: `QA ${attachmentId}`, latencyMs: 1, attempts: [] }),
     })
 
-    const result = await tool.execute({ prompt: 'a red eye', size: '1024x1024' }, {} as never) as {
+    const result = await tool.execute({ prompt: 'a red eye' }, {} as never) as {
       images: Array<{ attachmentId?: string }>
       meta: { qa: Array<{ text: string }> }
     }
@@ -50,11 +50,12 @@ describe('image generation tool', () => {
 })
 
 describe('imageGenerationApprovalGate', () => {
-  it('requires approval only for the image generation tool', async () => {
+  it('delegates image generation to the Harness permission policy', async () => {
     const next = vi.fn(async () => ({ kind: 'allow' as const }))
     await expect(imageGenerationApprovalGate({ name: 'mindseye_generate_image' }, next))
-      .resolves.toEqual({ kind: 'ask', reason: '生成图片并保存为 MindsEye 附件' })
+      .resolves.toEqual({ kind: 'allow' })
     await expect(imageGenerationApprovalGate({ name: 'other' }, next))
       .resolves.toEqual({ kind: 'allow' })
+    expect(next).toHaveBeenCalledTimes(2)
   })
 })

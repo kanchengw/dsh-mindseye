@@ -478,19 +478,15 @@ V1 不做：
 #### 工具契约
 
 ```text
-mindseye_generate_image(prompt, size, n?)
+mindseye_generate_image(prompt)
 
 prompt  必填，描述要生成的画面；最大长度由 schema 限制
-size    必填，使用 Provider 支持的画布尺寸；每次调用按当前用户需求传入
-n       可选，候选数，1-4；默认 1，超过上限直接拒绝，不隐式拆分调用
 ```
 
 工具的内部请求在调用前归一化为 `ImageGenerationSpec`：
 
 ```text
 prompt
-size
-n
 requestVersion
 ```
 

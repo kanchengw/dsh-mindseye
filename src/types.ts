@@ -44,8 +44,6 @@ export interface ImageGenerationRoute {
 
 export interface ImageGenerationSpec {
   prompt: string
-  size: string
-  n: number
   requestVersion: string
 }
 

@@ -12,8 +12,6 @@ const NO_WATERMARK_INSTRUCTION = 'Do not include a watermark, signature, logo, o
 
 export interface ImageGenerationToolInput {
   prompt: string
-  size?: string
-  n?: number
 }
 
 export interface SavedGeneratedImage {
@@ -153,17 +151,9 @@ function normalizeImageGenerationSpec(
   const prompt = input.prompt.trim()
   if (prompt === '') throw new Error('mindseye_generate_image: prompt is required')
   if (prompt.length > 4_000) throw new Error('mindseye_generate_image: prompt exceeds 4000 characters')
-  const n = input.n ?? 1
-  if (!Number.isInteger(n) || n < 1 || n > 4) {
-    throw new Error('mindseye_generate_image: n must be between 1 and 4')
-  }
   if (routes.length === 0) throw new Error('mindseye_generate_image: no image generation route configured')
-  const size = input.size?.trim() ?? ''
-  if (size === '') throw new Error('mindseye_generate_image: size is required')
   return {
     prompt: `${prompt}\n\n${NO_WATERMARK_INSTRUCTION}`,
-    size,
-    n,
     requestVersion: IMAGE_GENERATION_REQUEST_VERSION,
   }
 }

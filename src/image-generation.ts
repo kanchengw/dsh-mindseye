@@ -65,8 +65,6 @@ export async function callImageGenerationProvider(
       body: JSON.stringify({
         model: options.route.model,
         prompt: options.spec.prompt,
-        size: options.spec.size,
-        n: options.spec.n,
       }),
       signal: options.signal,
     },

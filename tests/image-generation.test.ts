@@ -32,18 +32,16 @@ describe('callImageGenerationProvider', () => {
     const result = await callImageGenerationProvider({
       route,
       apiKey: 'secret',
-      spec: { prompt: 'a precise image', size: '1536x1024', n: 1, requestVersion: 'v1' },
+      spec: { prompt: 'a precise image', requestVersion: 'v1' },
     }, fetchMock as unknown as typeof fetch)
 
     expect(result.images).toHaveLength(1)
     expect(result.images[0]?.mediaType).toBe('image/png')
     expect(result.images[0]?.data).toEqual(new Uint8Array(Buffer.from(pngBase64, 'base64')))
     const request = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined
-    expect(JSON.parse(String(request?.body))).toMatchObject({
+    expect(JSON.parse(String(request?.body))).toEqual({
       model: route.model,
       prompt: 'a precise image',
-      size: '1536x1024',
-      n: 1,
     })
   })
 
@@ -57,7 +55,7 @@ describe('callImageGenerationProvider', () => {
     const result = await callImageGenerationProvider({
       route,
       apiKey: 'secret',
-      spec: { prompt: 'a precise image', size: '1024x1024', n: 1, requestVersion: 'v1' },
+      spec: { prompt: 'a precise image', requestVersion: 'v1' },
       resolveHost: async () => [{ address: '8.8.8.8' }],
     }, fetchMock as unknown as typeof fetch)
 
@@ -73,7 +71,7 @@ describe('callImageGenerationProvider', () => {
     await expect(callImageGenerationProvider({
       route,
       apiKey: 'secret',
-      spec: { prompt: 'a precise image', size: '1024x1024', n: 1, requestVersion: 'v1' },
+      spec: { prompt: 'a precise image', requestVersion: 'v1' },
     }, fetchMock as unknown as typeof fetch)).rejects.toMatchObject({ kind: 'invalid-input' })
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
@@ -89,7 +87,7 @@ describe('callImageGenerationProvider', () => {
     await expect(callImageGenerationProvider({
       route,
       apiKey: 'secret',
-      spec: { prompt: 'a precise image', size: '1024x1024', n: 1, requestVersion: 'v1' },
+      spec: { prompt: 'a precise image', requestVersion: 'v1' },
     }, fetchMock as unknown as typeof fetch)).rejects.toMatchObject({ kind: 'invalid-input' })
   })
 })
@@ -103,7 +101,7 @@ describe('runImageGenerationChain', () => {
 
     const result = await runImageGenerationChain({
       routes: [route, fallback],
-      spec: { prompt: 'a precise image', size: '1024x1024', n: 1, requestVersion: 'v1' },
+      spec: { prompt: 'a precise image', requestVersion: 'v1' },
       resolveApiKey: async () => 'secret',
       fetchImpl: fetchMock as unknown as typeof fetch,
     })
@@ -119,7 +117,7 @@ describe('runImageGenerationChain', () => {
 
     await expect(runImageGenerationChain({
       routes: [route, fallback],
-      spec: { prompt: 'a precise image', size: '1024x1024', n: 1, requestVersion: 'v1' },
+      spec: { prompt: 'a precise image', requestVersion: 'v1' },
       resolveApiKey: async () => 'secret',
       fetchImpl: fetchMock as unknown as typeof fetch,
     })).rejects.toMatchObject({
