@@ -11,3 +11,5 @@ coverage/
 !.env.example
 _tmp/
 IMPLEMENTATION_LOG.md
+docs/design.md
+docs/logo-design-brief.md
