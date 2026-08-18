@@ -6,7 +6,7 @@
 
 > 让 DeepSeek 原生看图 —— model-driven vision tools for DeepSeek Harness
 
-MindsEye 是一个 DeepSeek Harness（dsh）vision 插件。粘贴图片后，图片原样显示在会话里，DeepSeek 继续负责思考，视觉模型负责看图。插件暴露一组按任务拆分的视觉工具，由模型根据用户意图选择工具，每个工具固定映射到对应的意图和模型路由，返回结构化 JSON（含真实 token 用量），并通过缓存、证据复用与多图批量减少重复开销。
+MindsEye 是一个 DeepSeek Harness（dsh）vision 插件。粘贴图片后，图片原样显示在会话里，DeepSeek 继续负责思考，视觉模型负责看图。插件暴露一组按任务拆分的视觉工具，由模型根据用户意图选择工具，每个工具固定映射到对应的意图和模型路由，返回结构化 JSON，并通过缓存与证据复用减少重复开销。
 
 ## 核心体验
 
