@@ -1,3 +1,5 @@
+import { lookup } from 'node:dns/promises'
+import { isIP } from 'node:net'
 import { routeLabel } from './route.js'
 import type {
   GeneratedImage,
@@ -30,6 +32,7 @@ export interface ImageGenerationProviderOptions {
   apiKey: string
   spec: ImageGenerationSpec
   signal?: AbortSignal
+  resolveHost?: (hostname: string) => Promise<Array<{ address: string }>>
 }
 
 export interface ImageGenerationChainOptions {
@@ -72,7 +75,7 @@ export async function callImageGenerationProvider(
     throw classifyImageGenerationHttpError(response.status, await response.text().catch(() => ''))
   }
   const body = await response.json() as Record<string, unknown>
-  const images = decodeImages(body)
+  const images = await decodeImages(body, fetchImpl, options.signal, options.resolveHost)
   if (images.length === 0) {
     throw new ImageGenerationProviderError('invalid-input', 'image provider returned no images')
   }
@@ -122,21 +125,115 @@ export async function runImageGenerationChain(
   throw new ImageGenerationProviderError('unknown', 'no image generation route configured')
 }
 
-function decodeImages(body: Record<string, unknown>): GeneratedImage[] {
+async function decodeImages(
+  body: Record<string, unknown>,
+  fetchImpl: typeof fetch,
+  signal?: AbortSignal,
+  resolveHost: (hostname: string) => Promise<Array<{ address: string }>> = (hostname) => lookup(hostname, { all: true }),
+): Promise<GeneratedImage[]> {
   if (!Array.isArray(body.data)) {
     throw new ImageGenerationProviderError('invalid-input', 'image provider returned an invalid response')
   }
-  return body.data.map((value) => {
+  return Promise.all(body.data.map(async (value) => {
     if (typeof value !== 'object' || value === null) {
       throw new ImageGenerationProviderError('invalid-input', 'image provider returned an invalid image')
     }
-    const encoded = (value as Record<string, unknown>).b64_json
-    if (typeof encoded !== 'string' || encoded === '') {
-      throw new ImageGenerationProviderError('invalid-input', 'image provider did not return b64_json')
+    const image = value as Record<string, unknown>
+    if (typeof image.b64_json === 'string' && image.b64_json !== '') {
+      const data = new Uint8Array(Buffer.from(image.b64_json, 'base64'))
+      return { data, mediaType: mediaTypeOf(data) }
     }
-    const data = new Uint8Array(Buffer.from(encoded, 'base64'))
-    return { data, mediaType: mediaTypeOf(data) }
-  })
+    if (typeof image.url === 'string' && image.url !== '') {
+      return downloadGeneratedImage(image.url, fetchImpl, signal, resolveHost)
+    }
+    throw new ImageGenerationProviderError('invalid-input', 'image provider did not return b64_json or URL')
+  }))
+}
+
+async function downloadGeneratedImage(
+  rawUrl: string,
+  fetchImpl: typeof fetch,
+  signal: AbortSignal | undefined,
+  resolveHost: (hostname: string) => Promise<Array<{ address: string }>>,
+): Promise<GeneratedImage> {
+  const url = await safeImageUrl(rawUrl, resolveHost)
+  const response = await fetchImpl(url, { redirect: 'error', signal })
+  if (!response.ok) {
+    throw new ImageGenerationProviderError('network', `image provider URL download failed (HTTP ${response.status})`, response.status)
+  }
+  const contentLength = Number(response.headers.get('content-length'))
+  if (Number.isFinite(contentLength) && contentLength > MAX_IMAGE_BYTES) {
+    throw new ImageGenerationProviderError('invalid-input', 'image provider returned an oversized image')
+  }
+  const data = await readResponseBytes(response)
+  return { data, mediaType: mediaTypeOf(data) }
+}
+
+const MAX_IMAGE_BYTES = 25 * 1024 * 1024
+
+async function readResponseBytes(response: Response): Promise<Uint8Array> {
+  const reader = response.body?.getReader()
+  if (reader === undefined) return new Uint8Array(await response.arrayBuffer())
+  const chunks: Uint8Array[] = []
+  let total = 0
+  for (;;) {
+    const next = await reader.read()
+    if (next.done) break
+    total += next.value.byteLength
+    if (total > MAX_IMAGE_BYTES) {
+      await reader.cancel()
+      throw new ImageGenerationProviderError('invalid-input', 'image provider returned an oversized image')
+    }
+    chunks.push(next.value)
+  }
+  const bytes = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return bytes
+}
+
+async function safeImageUrl(
+  rawUrl: string,
+  resolveHost: (hostname: string) => Promise<Array<{ address: string }>>,
+): Promise<string> {
+  let url: URL
+  try {
+    url = new URL(rawUrl)
+  } catch {
+    throw new ImageGenerationProviderError('invalid-input', 'image provider returned an invalid image URL')
+  }
+  if (url.protocol !== 'https:') {
+    throw new ImageGenerationProviderError('invalid-input', 'image provider URL must use HTTPS')
+  }
+  const addresses = await resolveHost(url.hostname).catch(() => [])
+  if (addresses.length === 0 || addresses.some((entry) => !isPublicAddress(entry.address))) {
+    throw new ImageGenerationProviderError('invalid-input', 'image provider URL resolves to a restricted address')
+  }
+  return url.toString()
+}
+
+function isPublicAddress(address: string): boolean {
+  if (isIP(address) === 4) {
+    const parts = address.split('.').map(Number)
+    const first = parts[0] ?? 0
+    const second = parts[1] ?? 0
+    if (first === 10 || first === 127 || first >= 224 || first === 0) return false
+    if (first === 169 && second === 254) return false
+    if (first === 172 && second >= 16 && second <= 31) return false
+    if (first === 192 && second === 168) return false
+    return true
+  }
+  if (isIP(address) === 6) {
+    const normalized = address.toLowerCase()
+    return normalized !== '::1' && normalized !== '::' && !normalized.startsWith('fc')
+      && !normalized.startsWith('fd') && !normalized.startsWith('fe8')
+      && !normalized.startsWith('fe9') && !normalized.startsWith('fea')
+      && !normalized.startsWith('feb')
+  }
+  return false
 }
 
 function mediaTypeOf(data: Uint8Array): GeneratedImageMediaType {

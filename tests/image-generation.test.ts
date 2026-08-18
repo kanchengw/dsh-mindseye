@@ -47,6 +47,38 @@ describe('callImageGenerationProvider', () => {
       n: 1,
     })
   })
+
+  it('downloads an HTTPS URL response after validating the image bytes', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ data: [{ url: 'https://cdn.example/image.png' }] }))
+      .mockResolvedValueOnce(new Response(Buffer.from(pngBase64, 'base64'), {
+        headers: { 'content-type': 'image/png' },
+      }))
+
+    const result = await callImageGenerationProvider({
+      route,
+      apiKey: 'secret',
+      spec: { prompt: 'a precise image', size: '1024x1024', n: 1, requestVersion: 'v1' },
+      resolveHost: async () => [{ address: '8.8.8.8' }],
+    }, fetchMock as unknown as typeof fetch)
+
+    expect(result.images[0]?.mediaType).toBe('image/png')
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ redirect: 'error' })
+  })
+
+  it('rejects non-HTTPS provider image URLs before downloading them', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      data: [{ url: 'http://127.0.0.1/image.png' }],
+    }))
+
+    await expect(callImageGenerationProvider({
+      route,
+      apiKey: 'secret',
+      spec: { prompt: 'a precise image', size: '1024x1024', n: 1, requestVersion: 'v1' },
+    }, fetchMock as unknown as typeof fetch)).rejects.toMatchObject({ kind: 'invalid-input' })
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('runImageGenerationChain', () => {
