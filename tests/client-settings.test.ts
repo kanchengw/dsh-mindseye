@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   decodeSettings,
   encodeSettings,
+  imageRouteIsComplete,
+  imageRouteValidationError,
   optionalRouteValidationError,
   routeIsComplete,
   routeValidationError,
@@ -14,6 +16,12 @@ const complete = {
   apiKeyEnv: 'DASHSCOPE_API_KEY',
   protocol: 'chat-completions',
   maxTokens: '2048',
+}
+
+const completeImageRoute = {
+  model: 'doubao-seed-2-0-pro-260215',
+  baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+  apiKeyEnv: 'ARK_API_KEY',
 }
 
 describe('client settings codec', () => {
@@ -39,12 +47,37 @@ describe('client settings codec', () => {
     expect(encoded.routes.understand[0]?.protocol).toBe('chat-completions')
   })
 
+  it('round-trips image primary and fallback routes independently from vision routes', () => {
+    const draft = decodeSettings({
+      image: { routes: [completeImageRoute, { ...completeImageRoute, model: 'doubao-seedream-5-0-260128' }] },
+    })
+    expect(draft.imagePrimary.model).toBe('doubao-seed-2-0-pro-260215')
+    expect(draft.imageFallback.model).toBe('doubao-seedream-5-0-260128')
+
+    const encoded = encodeSettings(draft)
+    expect(encoded.routes).toEqual({})
+    expect(encoded.image.routes).toEqual([
+      completeImageRoute,
+      { ...completeImageRoute, model: 'doubao-seedream-5-0-260128' },
+    ])
+  })
+
   it('keeps incomplete routes out of saved settings', () => {
     const draft = decodeSettings({})
     const incomplete = updateRoute(draft.defaultRoute, { ...complete, model: '' })
     const encoded = encodeSettings({ ...draft, defaultRoute: incomplete })
     expect(encoded.fallbacks).toEqual([])
     expect(encoded.routes).toEqual({})
+  })
+
+  it('does not serialize a fallback image route without a complete primary route', () => {
+    const draft = decodeSettings({})
+    const encoded = encodeSettings({
+      ...draft,
+      imageFallback: completeImageRoute,
+    })
+
+    expect(encoded.image.routes).toEqual([])
   })
 
   it('validates model, url and credential fields', () => {
@@ -54,6 +87,12 @@ describe('client settings codec', () => {
     expect(routeValidationError({ ...complete, baseUrl: 'not-a-url' })).toBeDefined()
     expect(routeValidationError({ ...complete, apiKeyEnv: '' })).toBeDefined()
     expect(routeValidationError({ ...complete, maxTokens: '0' })).toBeDefined()
+  })
+
+  it('requires image model, URL and credential fields', () => {
+    expect(imageRouteIsComplete(completeImageRoute)).toBe(true)
+    expect(imageRouteValidationError({ ...completeImageRoute, model: '' })).toBeDefined()
+    expect(imageRouteValidationError({ ...completeImageRoute, baseUrl: 'not-a-url' })).toBeDefined()
   })
 
   it('allows optional override routes to stay empty', () => {

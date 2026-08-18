@@ -1,7 +1,7 @@
 import z from '@deepseek-ai/schemastery'
 import type Schema from '@deepseek-ai/schemastery'
 import { settingsNamespace } from '@deepseek-ai/dsh-settings'
-import type { RouteKind, VisionRoute } from './types.js'
+import type { ImageGenerationRoute, RouteKind, VisionRoute } from './types.js'
 
 export const MINDSEYE_SETTINGS_NAMESPACE = settingsNamespace('mindseye')
 
@@ -17,6 +17,7 @@ export interface MindsEyeConfig {
   userNotice?: boolean
   routes?: Partial<Record<RouteKind, VisionRoute[]>>
   fallbacks?: VisionRoute[]
+  image?: { routes?: ImageGenerationRoute[] }
 }
 
 const routeSchema = z.object({
@@ -25,6 +26,12 @@ const routeSchema = z.object({
   apiKeyEnv: z.string(),
   protocol: z.union(['chat-completions', 'responses'] as const),
   maxTokens: z.number(),
+})
+
+const imageRouteSchema = z.object({
+  model: z.string(),
+  baseUrl: z.string(),
+  apiKeyEnv: z.string(),
 })
 
 export const Config: Schema<MindsEyeConfig> = z.object({
@@ -39,14 +46,18 @@ export const Config: Schema<MindsEyeConfig> = z.object({
   userNotice: z.boolean().default(true),
   routes: z.dict(z.array(routeSchema)).default({}),
   fallbacks: z.array(routeSchema).default([]),
+  image: z.object({
+    routes: z.array(imageRouteSchema).default([]),
+  }).default({ routes: [] }),
 })
 
 export function resolveMindsEyeConfig(
   config: MindsEyeConfig | undefined,
-): Required<Pick<MindsEyeConfig, 'routes' | 'fallbacks'>> & MindsEyeConfig {
+): Required<Pick<MindsEyeConfig, 'routes' | 'fallbacks' | 'image'>> & MindsEyeConfig {
   return {
     ...config,
     routes: config?.routes ?? {},
     fallbacks: config?.fallbacks ?? [],
+    image: config?.image ?? { routes: [] },
   }
 }

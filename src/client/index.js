@@ -4,8 +4,11 @@ import {
   OVERRIDE_KINDS,
   OVERRIDE_LABELS,
   decodeSettings,
+  emptyImageRoute,
   emptyRoute,
   encodeSettings,
+  imageRouteIsComplete,
+  optionalImageRouteValidationError,
   optionalRouteValidationError,
   routeIsComplete,
   routeValidationError,
@@ -330,6 +333,49 @@ function RouteFields(props) {
   ])
 }
 
+function ImageRouteFields(props) {
+  const { value, onChange, disabled } = props
+  const patch = (key) => (next) => onChange({ ...value, [key]: next })
+  return React.createElement('div', { className: 'mindseye-grid' }, [
+    React.createElement(Field, {
+      key: 'model',
+      label: '模型 ID',
+    }, React.createElement(TextInput, {
+      value: value.model,
+      onChange: patch('model'),
+      disabled,
+      placeholder: '例如 doubao-seed-2-0-pro-260215',
+      ariaLabel: '图片生成模型 ID',
+    })),
+    React.createElement(Field, {
+      key: 'baseUrl',
+      label: 'Base URL',
+    }, React.createElement(TextInput, {
+      value: value.baseUrl,
+      onChange: patch('baseUrl'),
+      disabled,
+      type: 'url',
+      placeholder: 'https://...',
+      ariaLabel: '图片生成 Base URL',
+    })),
+    React.createElement(Field, {
+      key: 'apiKeyEnv',
+      label: 'API Key',
+    }, React.createElement(PasswordInput, {
+      value: value.apiKeyEnv,
+      onChange: patch('apiKeyEnv'),
+      disabled,
+      placeholder: 'sk-...',
+      ariaLabel: '图片生成 API Key',
+    })),
+  ])
+}
+
+function imageRouteHasValues(route) {
+  return ['model', 'baseUrl', 'apiKeyEnv']
+    .some((key) => typeof route?.[key] === 'string' && route[key].trim() !== '')
+}
+
 function SettingsCard() {
   const [open, setOpen] = useState(false)
   const [summary, setSummary] = useState(undefined)
@@ -341,6 +387,7 @@ function SettingsCard() {
   const [error, setError] = useState(undefined)
   const [addedOverrides, setAddedOverrides] = useState([])
   const [pendingAdd, setPendingAdd] = useState(OVERRIDE_KINDS[0])
+  const [imageFallbackAdded, setImageFallbackAdded] = useState(false)
 
   const load = useCallback(async () => {
     if (loading) return
@@ -359,6 +406,7 @@ function SettingsCard() {
       setDraft(next)
       setBaseline(next)
       setAddedOverrides(OVERRIDE_KINDS.filter((kind) => routeIsComplete(next.overrides[kind])))
+      setImageFallbackAdded(imageRouteHasValues(next.imageFallback))
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
@@ -373,7 +421,7 @@ function SettingsCard() {
   const dirty = draft !== undefined && baseline !== undefined
     && JSON.stringify(draft) !== JSON.stringify(baseline)
   const writable = summary?.writable !== false
-  const defaultError = draft === undefined ? undefined : routeValidationError(draft.defaultRoute)
+  const defaultError = draft === undefined ? undefined : optionalRouteValidationError(draft.defaultRoute)
   const overrideErrors = {}
   if (draft !== undefined) {
     for (const kind of OVERRIDE_KINDS) {
@@ -381,12 +429,19 @@ function SettingsCard() {
       if (routeError !== undefined) overrideErrors[kind] = routeError
     }
   }
-  const hasValidRoute = draft !== undefined && routeIsComplete(draft.defaultRoute)
-  const validationError = defaultError ?? Object.values(overrideErrors)[0]
+  const imagePrimaryError = draft === undefined ? undefined : optionalImageRouteValidationError(draft.imagePrimary)
+  const imageFallbackError = draft === undefined || !imageFallbackAdded
+    ? undefined
+    : optionalImageRouteValidationError(draft.imageFallback)
+  const hasValidRoute = draft !== undefined && (
+    routeIsComplete(draft.defaultRoute) || imageRouteIsComplete(draft.imagePrimary)
+  )
+  const validationError = defaultError ?? Object.values(overrideErrors)[0] ?? imagePrimaryError ?? imageFallbackError
 
   const discard = () => {
     setDraft(baseline)
     setAddedOverrides(OVERRIDE_KINDS.filter((kind) => routeIsComplete(baseline.overrides[kind])))
+    setImageFallbackAdded(imageRouteHasValues(baseline.imageFallback))
     setError(undefined)
     setStatus('')
   }
@@ -404,6 +459,19 @@ function SettingsCard() {
       overrides: { ...current.overrides, [kind]: emptyRoute() },
     })
     setAddedOverrides((current) => current.filter((item) => item !== kind))
+    setStatus('')
+    setError(undefined)
+  }
+
+  const addImageFallback = () => {
+    setImageFallbackAdded(true)
+    setStatus('')
+    setError(undefined)
+  }
+
+  const removeImageFallback = () => {
+    setDraft((current) => ({ ...current, imageFallback: emptyImageRoute() }))
+    setImageFallbackAdded(false)
     setStatus('')
     setError(undefined)
   }
@@ -430,6 +498,7 @@ function SettingsCard() {
       setDraft(next)
       setBaseline(next)
       setAddedOverrides(OVERRIDE_KINDS.filter((kind) => routeIsComplete(next.overrides[kind])))
+      setImageFallbackAdded(imageRouteHasValues(next.imageFallback))
       setStatus('已保存')
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
@@ -544,12 +613,67 @@ function SettingsCard() {
               onClick: () => addOverride(addTarget),
             }, '添加'),
           ]),
+        React.createElement('section', { key: 'image', className: 'mindseye-section' }, [
+          React.createElement('div', { key: 'title', className: 'mindseye-section-title' }, '图片生成'),
+          React.createElement('p', { key: 'hint', className: 'mindseye-section-hint' },
+            '主模型生成新图片；仅在额度、限流或网络错误时切换到后备模型。'),
+          React.createElement('div', { key: 'primary-head', className: 'mindseye-override-head' },
+            React.createElement('span', null, '主模型')),
+          React.createElement('div', { key: 'primary-body', className: 'mindseye-override-body' }, [
+            React.createElement(ImageRouteFields, {
+              key: 'fields',
+              value: draft.imagePrimary,
+              disabled: !writable,
+              onChange: (next) => {
+                setDraft((current) => ({ ...current, imagePrimary: next }))
+                setStatus('')
+                setError(undefined)
+              },
+            }),
+            imagePrimaryError === undefined
+              ? null
+              : React.createElement('p', { key: 'error', className: 'mindseye-error' }, imagePrimaryError),
+          ]),
+          !imageFallbackAdded
+            ? React.createElement('div', { key: 'add', className: 'mindseye-add-row' },
+              React.createElement('button', {
+                type: 'button',
+                disabled: !writable,
+                onClick: addImageFallback,
+              }, '添加后备模型'))
+            : [
+              React.createElement('div', { key: 'fallback-head', className: 'mindseye-override-head' }, [
+                React.createElement('span', { key: 'title' }, '后备模型'),
+                React.createElement('button', {
+                  key: 'remove',
+                  type: 'button',
+                  disabled: !writable,
+                  onClick: removeImageFallback,
+                }, '移除'),
+              ]),
+              React.createElement('div', { key: 'fallback-body', className: 'mindseye-override-body' }, [
+                React.createElement(ImageRouteFields, {
+                  key: 'fields',
+                  value: draft.imageFallback,
+                  disabled: !writable,
+                  onChange: (next) => {
+                    setDraft((current) => ({ ...current, imageFallback: next }))
+                    setStatus('')
+                    setError(undefined)
+                  },
+                }),
+                imageFallbackError === undefined
+                  ? null
+                  : React.createElement('p', { key: 'error', className: 'mindseye-error' }, imageFallbackError),
+              ]),
+            ],
+        ]),
         !writable
           ? React.createElement('p', { key: 'readonly', className: 'mindseye-error' }, '当前部署的设置为只读')
           : null,
         !hasValidRoute && dirty
           ? React.createElement('p', { key: 'no-route', className: 'mindseye-error' },
-            '请至少填写通用理解模型')
+            '请至少填写通用理解模型或图片生成主模型')
           : null,
         React.createElement('div', { key: 'footer', className: 'mindseye-footer' }, [
           status === ''
@@ -606,10 +730,142 @@ function SettingsCard() {
   ])
 }
 
-export const inject = ['slots']
+export const inject = ['slots', 'sessions']
 
 export function apply(ctx) {
   installStyle(ctx)
+  const generatedImageUrls = new Map()
+  const objectUrls = new Set()
+  const loadGeneratedImageUrl = async (sessionId, attachment) => {
+    const key = `${sessionId}:${attachment.attachmentId}`
+    const cached = generatedImageUrls.get(key)
+    if (cached !== undefined) return cached
+    const pending = (async () => {
+      const binding = ctx.sessions.binding(sessionId)
+      if (binding === undefined) throw new Error('mindseye: unknown session')
+      const result = await binding.session.readAttachment(attachment.attachmentId)
+      if (!result.ok) throw new Error(`mindseye: ${result.error.code}: ${result.error.message}`)
+      const ref = result.value.attachment
+      const data = result.value.data
+      if (typeof URL.createObjectURL === 'function') {
+        const url = URL.createObjectURL(new Blob([data], { type: ref.mediaType }))
+        objectUrls.add(url)
+        return url
+      }
+      let binary = ''
+      const chunk = 0x8000
+      for (let offset = 0; offset < data.length; offset += chunk) {
+        binary += String.fromCharCode(...data.subarray(offset, offset + chunk))
+      }
+      return `data:${ref.mediaType};base64,${btoa(binary)}`
+    })().catch((error) => {
+      generatedImageUrls.delete(key)
+      throw error
+    })
+    generatedImageUrls.set(key, pending)
+    return pending
+  }
+  function GeneratedImage(props) {
+    const { sessionId, attachment } = props
+    const [url, setUrl] = useState(undefined)
+    const [error, setError] = useState(undefined)
+    useEffect(() => {
+      let alive = true
+      loadGeneratedImageUrl(sessionId, attachment)
+        .then((next) => {
+          if (alive) setUrl(next)
+        })
+        .catch((caught) => {
+          if (alive) setError(caught instanceof Error ? caught.message : String(caught))
+        })
+      return () => {
+        alive = false
+      }
+    }, [sessionId, attachment.attachmentId])
+    if (error !== undefined) {
+      return React.createElement('span', { style: { fontSize: 12, color: 'var(--dsw-alias-label-error)' } }, `图片加载失败：${error}`)
+    }
+    if (url === undefined) {
+      return React.createElement('span', { style: { fontSize: 12, color: 'var(--dsw-alias-label-tertiary)' } }, '图片加载中…')
+    }
+    return React.createElement('img', {
+      src: url,
+      alt: attachment.name ?? '生成的图片',
+      style: { maxWidth: '100%', maxHeight: 480, borderRadius: 8, objectFit: 'contain', display: 'block' },
+    })
+  }
+  function GeneratedImageCard(props) {
+    const { toolName, block, sessionId } = props
+    const content = Array.isArray(block && block.resultView && block.resultView.content)
+      ? block.resultView.content
+      : Array.isArray(block && block.content)
+        ? block.content
+        : []
+    const images = content.filter((item) => item && item.type === 'image' && item.attachment)
+    const annotation = content.find((item) =>
+      item && item.type === 'text' && typeof item.text === 'string' && item.text.startsWith('('))
+    let argsJson = ''
+    const callViewRaw = block && block.callView && block.callView.rawInput
+    if (callViewRaw !== undefined) {
+      argsJson = JSON.stringify(callViewRaw, null, 2)
+    } else {
+      const argsRaw = block && (block.arguments ?? block.call?.argsRaw ?? block.argsRaw)
+      if (typeof argsRaw === 'string' && argsRaw !== '') {
+        try {
+          const parsed = JSON.parse(argsRaw)
+          if (parsed && typeof parsed === 'object') {
+            delete parsed.request
+          }
+          argsJson = JSON.stringify(parsed, null, 2)
+        } catch {
+          argsJson = argsRaw
+        }
+      }
+    }
+    const label = { fontSize: 11, fontWeight: 600, color: 'var(--dsw-alias-label-secondary)', marginBottom: 4 }
+    const mono = {
+      margin: 0,
+      font: '12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace',
+      whiteSpace: 'pre-wrap',
+      wordBreak: 'break-word',
+      color: 'var(--dsw-alias-label-secondary)',
+    }
+    return React.createElement('div', {
+      style: { display: 'grid', gap: 10, padding: '10px 12px', borderRadius: 8, background: 'var(--dsw-alias-bg-layer-2, rgba(128,128,128,.04))' },
+    }, [
+      React.createElement('div', { key: 'head', style: { fontSize: 13, fontWeight: 600, color: 'var(--dsw-alias-label-primary)' } },
+        toolName ?? 'mindseye_generate_image'),
+      argsJson === ''
+        ? null
+        : React.createElement('div', { key: 'in', style: { display: 'grid', gap: 4 } }, [
+          React.createElement('span', { key: 'label', style: label }, 'IN'),
+          React.createElement('pre', { key: 'json', style: mono }, argsJson),
+        ]),
+      images.length === 0
+        ? null
+        : React.createElement('div', { key: 'out', style: { display: 'grid', gap: 6 } }, [
+          React.createElement('span', { key: 'label', style: label }, 'OUT'),
+          React.createElement('div', { key: 'body', style: { display: 'grid', gap: 8 } }, [
+            ...images.map(({ attachment }) => React.createElement(GeneratedImage, {
+              key: String(attachment.attachmentId),
+              sessionId,
+              attachment,
+            })),
+            annotation === undefined
+              ? null
+              : React.createElement('span', {
+                key: 'meta',
+                style: { fontSize: 12, color: 'var(--dsw-alias-label-tertiary)', fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace' },
+              }, annotation.text),
+          ]),
+        ]),
+    ])
+  }
+  ctx.effect(() => () => {
+    for (const url of objectUrls) URL.revokeObjectURL(url)
+    objectUrls.clear()
+    generatedImageUrls.clear()
+  }, 'dsh-mindseye: generated image urls')
   if (typeof document !== 'undefined') {
     document.addEventListener('paste', onPasteCapture, true)
     document.addEventListener('focusin', onFocusCapture, true)
@@ -626,5 +882,13 @@ export function apply(ctx) {
       order: 30,
       label: () => 'MindsEye',
     }, SettingsCard)
+  )
+  ctx.slots.inject('tool.call.toolview', () =>
+    ctx.slots.register({
+      name: 'tool.call.toolview',
+      key: 'mindseye_generate_image',
+      priority: -10,
+      inject: () => ({}),
+    }, GeneratedImageCard)
   )
 }
