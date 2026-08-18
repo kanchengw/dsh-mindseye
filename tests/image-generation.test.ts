@@ -10,7 +10,6 @@ const route: ImageGenerationRoute = {
   model: 'primary-image-model',
   baseUrl: 'https://images.example/v1',
   apiKeyEnv: 'IMAGE_KEY',
-  defaultSize: '1024x1024',
 }
 
 const pngBase64 = Buffer.from([

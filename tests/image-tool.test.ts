@@ -6,7 +6,6 @@ const route: ImageGenerationRoute = {
   model: 'image-model',
   baseUrl: 'https://images.example/v1',
   apiKeyEnv: 'IMAGE_KEY',
-  defaultSize: '1024x1024',
 }
 
 const png = new Uint8Array([
@@ -30,7 +29,7 @@ describe('generateImagesWithMindsEye', () => {
       attempts: [],
     }))
 
-    const result = await generateImagesWithMindsEye({ prompt: 'a coral red eye', n: 1 }, {
+    const result = await generateImagesWithMindsEye({ prompt: 'a coral red eye', size: '1024x1024', n: 1 }, {
       generate,
       saveImage,
       probeImage: () => ({ width: 10, height: 20, format: 'png' }),
@@ -68,8 +67,20 @@ describe('generateImagesWithMindsEye', () => {
     expect(generate).not.toHaveBeenCalled()
   })
 
+  it('requires a canvas size for every generation request', async () => {
+    const generate = vi.fn()
+
+    await expect(generateImagesWithMindsEye({ prompt: 'a coral red eye' }, {
+      generate,
+      saveImage: vi.fn(),
+      probeImage: () => ({ width: 10, height: 20, format: 'png' }),
+    }, [route])).rejects.toThrow('size is required')
+
+    expect(generate).not.toHaveBeenCalled()
+  })
+
   it('keeps a saved candidate when a later candidate cannot be stored', async () => {
-    const result = await generateImagesWithMindsEye({ prompt: 'two eyes', n: 2 }, {
+    const result = await generateImagesWithMindsEye({ prompt: 'two eyes', size: '1024x1024', n: 2 }, {
       generate: async () => ({
         images: [
           { data: png, mediaType: 'image/png' as const },
@@ -94,7 +105,7 @@ describe('generateImagesWithMindsEye', () => {
   })
 
   it('reports QA failures without discarding a saved candidate', async () => {
-    const result = await generateImagesWithMindsEye({ prompt: 'an eye', n: 1 }, {
+    const result = await generateImagesWithMindsEye({ prompt: 'an eye', size: '1024x1024', n: 1 }, {
       generate: async () => ({
         images: [{ data: png, mediaType: 'image/png' as const }],
         provider: 'images.example',

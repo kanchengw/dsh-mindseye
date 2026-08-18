@@ -17,7 +17,7 @@ export function createImageGenerationTool(deps: CreateImageGenerationToolDeps) {
     description: '按文字描述生成图片并保存为 MindsEye 附件。生成后会尝试视觉回验。',
     parameters: {
       prompt: { type: 'string', required: true, description: '要生成的画面描述。' },
-      size: { type: 'string', description: '可选画布尺寸，未指定时使用图片生成路由默认值。' },
+      size: { type: 'string', required: true, description: '画布尺寸。每次生成都要按用户当前需求填写 Provider 支持的尺寸。' },
       n: { type: 'integer', description: '可选候选数，1-4，默认 1。' },
     },
     output: {

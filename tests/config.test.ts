@@ -23,10 +23,13 @@ describe('MindsEye config schema', () => {
           model: 'image-model',
           baseUrl: 'https://images.example/v1',
           apiKeyEnv: 'IMAGE_KEY',
-          defaultSize: '1024x1024',
         }],
       },
-    }) as { image: { routes: Array<{ model: string; defaultSize: string }> } }
-    expect(config.image.routes[0]).toMatchObject({ model: 'image-model', defaultSize: '1024x1024' })
+    }) as { image: { routes: Array<{ model: string; baseUrl: string; apiKeyEnv: string }> } }
+    expect(config.image.routes[0]).toMatchObject({
+      model: 'image-model',
+      baseUrl: 'https://images.example/v1',
+      apiKeyEnv: 'IMAGE_KEY',
+    })
   })
 })

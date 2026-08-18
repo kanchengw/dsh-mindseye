@@ -4,8 +4,11 @@ import {
   OVERRIDE_KINDS,
   OVERRIDE_LABELS,
   decodeSettings,
+  emptyImageRoute,
   emptyRoute,
   encodeSettings,
+  imageRouteIsComplete,
+  optionalImageRouteValidationError,
   optionalRouteValidationError,
   routeIsComplete,
   routeValidationError,
@@ -330,6 +333,49 @@ function RouteFields(props) {
   ])
 }
 
+function ImageRouteFields(props) {
+  const { value, onChange, disabled } = props
+  const patch = (key) => (next) => onChange({ ...value, [key]: next })
+  return React.createElement('div', { className: 'mindseye-grid' }, [
+    React.createElement(Field, {
+      key: 'model',
+      label: '模型 ID',
+    }, React.createElement(TextInput, {
+      value: value.model,
+      onChange: patch('model'),
+      disabled,
+      placeholder: '例如 doubao-seed-2-0-pro-260215',
+      ariaLabel: '图片生成模型 ID',
+    })),
+    React.createElement(Field, {
+      key: 'baseUrl',
+      label: 'Base URL',
+    }, React.createElement(TextInput, {
+      value: value.baseUrl,
+      onChange: patch('baseUrl'),
+      disabled,
+      type: 'url',
+      placeholder: 'https://...',
+      ariaLabel: '图片生成 Base URL',
+    })),
+    React.createElement(Field, {
+      key: 'apiKeyEnv',
+      label: 'API Key',
+    }, React.createElement(PasswordInput, {
+      value: value.apiKeyEnv,
+      onChange: patch('apiKeyEnv'),
+      disabled,
+      placeholder: 'sk-...',
+      ariaLabel: '图片生成 API Key',
+    })),
+  ])
+}
+
+function imageRouteHasValues(route) {
+  return ['model', 'baseUrl', 'apiKeyEnv']
+    .some((key) => typeof route?.[key] === 'string' && route[key].trim() !== '')
+}
+
 function SettingsCard() {
   const [open, setOpen] = useState(false)
   const [summary, setSummary] = useState(undefined)
@@ -341,6 +387,7 @@ function SettingsCard() {
   const [error, setError] = useState(undefined)
   const [addedOverrides, setAddedOverrides] = useState([])
   const [pendingAdd, setPendingAdd] = useState(OVERRIDE_KINDS[0])
+  const [imageFallbackAdded, setImageFallbackAdded] = useState(false)
 
   const load = useCallback(async () => {
     if (loading) return
@@ -359,6 +406,7 @@ function SettingsCard() {
       setDraft(next)
       setBaseline(next)
       setAddedOverrides(OVERRIDE_KINDS.filter((kind) => routeIsComplete(next.overrides[kind])))
+      setImageFallbackAdded(imageRouteHasValues(next.imageFallback))
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
@@ -373,7 +421,7 @@ function SettingsCard() {
   const dirty = draft !== undefined && baseline !== undefined
     && JSON.stringify(draft) !== JSON.stringify(baseline)
   const writable = summary?.writable !== false
-  const defaultError = draft === undefined ? undefined : routeValidationError(draft.defaultRoute)
+  const defaultError = draft === undefined ? undefined : optionalRouteValidationError(draft.defaultRoute)
   const overrideErrors = {}
   if (draft !== undefined) {
     for (const kind of OVERRIDE_KINDS) {
@@ -381,12 +429,19 @@ function SettingsCard() {
       if (routeError !== undefined) overrideErrors[kind] = routeError
     }
   }
-  const hasValidRoute = draft !== undefined && routeIsComplete(draft.defaultRoute)
-  const validationError = defaultError ?? Object.values(overrideErrors)[0]
+  const imagePrimaryError = draft === undefined ? undefined : optionalImageRouteValidationError(draft.imagePrimary)
+  const imageFallbackError = draft === undefined || !imageFallbackAdded
+    ? undefined
+    : optionalImageRouteValidationError(draft.imageFallback)
+  const hasValidRoute = draft !== undefined && (
+    routeIsComplete(draft.defaultRoute) || imageRouteIsComplete(draft.imagePrimary)
+  )
+  const validationError = defaultError ?? Object.values(overrideErrors)[0] ?? imagePrimaryError ?? imageFallbackError
 
   const discard = () => {
     setDraft(baseline)
     setAddedOverrides(OVERRIDE_KINDS.filter((kind) => routeIsComplete(baseline.overrides[kind])))
+    setImageFallbackAdded(imageRouteHasValues(baseline.imageFallback))
     setError(undefined)
     setStatus('')
   }
@@ -404,6 +459,19 @@ function SettingsCard() {
       overrides: { ...current.overrides, [kind]: emptyRoute() },
     })
     setAddedOverrides((current) => current.filter((item) => item !== kind))
+    setStatus('')
+    setError(undefined)
+  }
+
+  const addImageFallback = () => {
+    setImageFallbackAdded(true)
+    setStatus('')
+    setError(undefined)
+  }
+
+  const removeImageFallback = () => {
+    setDraft((current) => ({ ...current, imageFallback: emptyImageRoute() }))
+    setImageFallbackAdded(false)
     setStatus('')
     setError(undefined)
   }
@@ -430,6 +498,7 @@ function SettingsCard() {
       setDraft(next)
       setBaseline(next)
       setAddedOverrides(OVERRIDE_KINDS.filter((kind) => routeIsComplete(next.overrides[kind])))
+      setImageFallbackAdded(imageRouteHasValues(next.imageFallback))
       setStatus('已保存')
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
@@ -544,12 +613,67 @@ function SettingsCard() {
               onClick: () => addOverride(addTarget),
             }, '添加'),
           ]),
+        React.createElement('section', { key: 'image', className: 'mindseye-section' }, [
+          React.createElement('div', { key: 'title', className: 'mindseye-section-title' }, '图片生成'),
+          React.createElement('p', { key: 'hint', className: 'mindseye-section-hint' },
+            '主模型生成新图片；仅在额度、限流或网络错误时切换到后备模型。'),
+          React.createElement('div', { key: 'primary-head', className: 'mindseye-override-head' },
+            React.createElement('span', null, '主模型')),
+          React.createElement('div', { key: 'primary-body', className: 'mindseye-override-body' }, [
+            React.createElement(ImageRouteFields, {
+              key: 'fields',
+              value: draft.imagePrimary,
+              disabled: !writable,
+              onChange: (next) => {
+                setDraft((current) => ({ ...current, imagePrimary: next }))
+                setStatus('')
+                setError(undefined)
+              },
+            }),
+            imagePrimaryError === undefined
+              ? null
+              : React.createElement('p', { key: 'error', className: 'mindseye-error' }, imagePrimaryError),
+          ]),
+          !imageFallbackAdded
+            ? React.createElement('div', { key: 'add', className: 'mindseye-add-row' },
+              React.createElement('button', {
+                type: 'button',
+                disabled: !writable,
+                onClick: addImageFallback,
+              }, '添加后备模型'))
+            : [
+              React.createElement('div', { key: 'fallback-head', className: 'mindseye-override-head' }, [
+                React.createElement('span', { key: 'title' }, '后备模型'),
+                React.createElement('button', {
+                  key: 'remove',
+                  type: 'button',
+                  disabled: !writable,
+                  onClick: removeImageFallback,
+                }, '移除'),
+              ]),
+              React.createElement('div', { key: 'fallback-body', className: 'mindseye-override-body' }, [
+                React.createElement(ImageRouteFields, {
+                  key: 'fields',
+                  value: draft.imageFallback,
+                  disabled: !writable,
+                  onChange: (next) => {
+                    setDraft((current) => ({ ...current, imageFallback: next }))
+                    setStatus('')
+                    setError(undefined)
+                  },
+                }),
+                imageFallbackError === undefined
+                  ? null
+                  : React.createElement('p', { key: 'error', className: 'mindseye-error' }, imageFallbackError),
+              ]),
+            ],
+        ]),
         !writable
           ? React.createElement('p', { key: 'readonly', className: 'mindseye-error' }, '当前部署的设置为只读')
           : null,
         !hasValidRoute && dirty
           ? React.createElement('p', { key: 'no-route', className: 'mindseye-error' },
-            '请至少填写通用理解模型')
+            '请至少填写通用理解模型或图片生成主模型')
           : null,
         React.createElement('div', { key: 'footer', className: 'mindseye-footer' }, [
           status === ''

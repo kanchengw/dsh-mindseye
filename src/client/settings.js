@@ -15,6 +15,14 @@ export function emptyRoute() {
   }
 }
 
+export function emptyImageRoute() {
+  return {
+    model: '',
+    baseUrl: '',
+    apiKeyEnv: '',
+  }
+}
+
 function configRouteToDraft(route) {
   if (route === undefined || route === null || typeof route !== 'object') {
     return emptyRoute()
@@ -30,10 +38,24 @@ function configRouteToDraft(route) {
   }
 }
 
+function configImageRouteToDraft(route) {
+  if (route === undefined || route === null || typeof route !== 'object') {
+    return emptyImageRoute()
+  }
+  return {
+    model: typeof route.model === 'string' ? route.model : '',
+    baseUrl: typeof route.baseUrl === 'string' ? route.baseUrl : '',
+    apiKeyEnv: typeof route.apiKeyEnv === 'string' ? route.apiKeyEnv : '',
+  }
+}
+
 export function decodeSettings(section) {
   const value = section && typeof section === 'object' ? section : {}
   const fallbacks = Array.isArray(value.fallbacks) ? value.fallbacks : []
   const routes = value.routes && typeof value.routes === 'object' ? value.routes : {}
+  const imageRoutes = value.image && typeof value.image === 'object' && Array.isArray(value.image.routes)
+    ? value.image.routes
+    : []
   const understandRoute = Array.isArray(routes.understand)
     ? routes.understand[0]
     : fallbacks[0]
@@ -45,6 +67,8 @@ export function decodeSettings(section) {
   return {
     defaultRoute: configRouteToDraft(understandRoute),
     overrides,
+    imagePrimary: configImageRouteToDraft(imageRoutes[0]),
+    imageFallback: configImageRouteToDraft(imageRoutes[1]),
     takeover: value.takeover === true,
   }
 }
@@ -84,6 +108,32 @@ export function routeValidationError(route) {
   return undefined
 }
 
+export function imageRouteIsComplete(route) {
+  return (
+    trimmed(route.model) !== ''
+    && isValidUrl(trimmed(route.baseUrl))
+    && trimmed(route.apiKeyEnv) !== ''
+  )
+}
+
+export function imageRouteValidationError(route) {
+  if (trimmed(route.model) === '') return '模型 ID 不能为空'
+  if (!isValidUrl(trimmed(route.baseUrl))) return 'API 地址必须是有效的 HTTP(S) URL'
+  if (trimmed(route.apiKeyEnv) === '') return 'API Key 不能为空'
+  return undefined
+}
+
+export function optionalImageRouteValidationError(route) {
+  if (
+    trimmed(route.model) === ''
+    && trimmed(route.baseUrl) === ''
+    && trimmed(route.apiKeyEnv) === ''
+  ) {
+    return undefined
+  }
+  return imageRouteValidationError(route)
+}
+
 export function optionalRouteValidationError(route) {
   if (
     trimmed(route.model) === ''
@@ -112,6 +162,14 @@ export function routeToConfig(route) {
   }
 }
 
+export function imageRouteToConfig(route) {
+  return {
+    model: trimmed(route.model),
+    baseUrl: trimmed(route.baseUrl).replace(/\/+$/, ''),
+    apiKeyEnv: trimmed(route.apiKeyEnv),
+  }
+}
+
 export function encodeSettings(draft) {
   const routes = {}
   if (routeIsComplete(draft.defaultRoute)) {
@@ -123,9 +181,18 @@ export function encodeSettings(draft) {
       routes[kind] = [routeToConfig(route)]
     }
   }
+  const imageRoutes = imageRouteIsComplete(draft.imagePrimary)
+    ? [
+        imageRouteToConfig(draft.imagePrimary),
+        ...(imageRouteIsComplete(draft.imageFallback) ? [imageRouteToConfig(draft.imageFallback)] : []),
+      ]
+    : []
   return {
     routes,
     fallbacks: [],
+    image: {
+      routes: imageRoutes,
+    },
     ...(draft.takeover === true ? { takeover: true } : {}),
   }
 }

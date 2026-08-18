@@ -40,7 +40,6 @@ export interface ImageGenerationRoute {
   model: string
   baseUrl: string
   apiKeyEnv: string
-  defaultSize: string
 }
 
 export interface ImageGenerationSpec {

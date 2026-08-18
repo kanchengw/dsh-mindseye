@@ -9,7 +9,6 @@ const route: ImageGenerationRoute = {
   model: 'image-model',
   baseUrl: 'https://images.example/v1',
   apiKeyEnv: 'IMAGE_KEY',
-  defaultSize: '1024x1024',
 }
 
 describe('image generation tool', () => {
@@ -22,7 +21,7 @@ describe('image generation tool', () => {
       probeImage: () => ({ width: 1, height: 1, format: 'png' }),
     })
 
-    await expect(tool.execute({ prompt: 'a red eye' }, {} as never))
+    await expect(tool.execute({ prompt: 'a red eye', size: '1024x1024' }, {} as never))
       .rejects.toThrow('no image generation route configured')
     expect(generate).not.toHaveBeenCalled()
   })
@@ -41,7 +40,7 @@ describe('image generation tool', () => {
       qa: async ({ attachmentId }) => ({ text: `QA ${attachmentId}`, latencyMs: 1, attempts: [] }),
     })
 
-    const result = await tool.execute({ prompt: 'a red eye' }, {} as never) as {
+    const result = await tool.execute({ prompt: 'a red eye', size: '1024x1024' }, {} as never) as {
       images: Array<{ attachmentId?: string }>
       meta: { qa: Array<{ text: string }> }
     }

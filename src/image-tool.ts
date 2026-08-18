@@ -157,8 +157,9 @@ function normalizeImageGenerationSpec(
   if (!Number.isInteger(n) || n < 1 || n > 4) {
     throw new Error('mindseye_generate_image: n must be between 1 and 4')
   }
-  const size = input.size?.trim() || routes[0]?.defaultSize
-  if (size === undefined || size === '') throw new Error('mindseye_generate_image: no image generation route configured')
+  if (routes.length === 0) throw new Error('mindseye_generate_image: no image generation route configured')
+  const size = input.size?.trim() ?? ''
+  if (size === '') throw new Error('mindseye_generate_image: size is required')
   return {
     prompt: `${prompt}\n\n${NO_WATERMARK_INSTRUCTION}`,
     size,

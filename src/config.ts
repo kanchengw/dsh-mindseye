@@ -32,7 +32,6 @@ const imageRouteSchema = z.object({
   model: z.string(),
   baseUrl: z.string(),
   apiKeyEnv: z.string(),
-  defaultSize: z.string(),
 })
 
 export const Config: Schema<MindsEyeConfig> = z.object({
