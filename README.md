@@ -4,88 +4,96 @@
 
 [![dsh.so security](https://www.dsh.so/badges/dsh-mindseye.svg)](https://www.dsh.so/artifact/dsh-mindseye/)
 
-> 让 DeepSeek 原生看图 —— model-driven vision tools for DeepSeek Harness
+> Let DeepSeek see images natively — model-driven vision tools for DeepSeek Harness
 
-当前版本：0.2.2
+[English](README.md) | [中文](README.zh-CN.md)
 
-MindsEye 是一个 DeepSeek Harness（dsh）vision 插件。粘贴图片后，图片原样显示在会话里，DeepSeek 继续负责思考，视觉模型负责看图。插件暴露一组按任务拆分的视觉工具，由模型根据用户意图选择工具，每个工具固定映射到对应的意图和模型路由，返回结构化 JSON，并通过缓存与证据复用减少重复开销。
+Current version: 0.2.2
 
-## 核心体验
+MindsEye is a vision plugin for DeepSeek Harness (dsh). Pasted images stay visible in the conversation while DeepSeek keeps reasoning and the vision model does the seeing. The plugin exposes task-specific vision tools that the model selects by intent; each tool maps to a fixed intent and model route, returns structured JSON, and reduces repeated calls through caching and evidence reuse.
 
-- **粘贴即看图**：接管 `deepseek-official` 路由，图片原生进入会话；接管不可用时自动降级为路径粘贴，新图始终能发出去
-- **模型选工具，插件管模型**：`mindseye_read_image`、`mindseye_ocr`、`mindseye_ground`、`mindseye_colors` 各自固定意图，模型按用户问题选工具，插件按工具映射到对应的模型链
-- **生图即所见**：`mindseye_generate_image` 委托专用图片生成模型，结果作为 dsh 附件直接显示在会话中，不自动保存、不自动回验
-- **图片轮自动挂载**：检测到图片消息时自动注册视觉工具；纯文本轮默认只保留一个激活入口，避免常驻占用模型上下文
-- **多图一次读**：批量读取多张图片，批量遇 4xx 按指数拆分降级，失败只影响单张
-- **旧会话不毒化**：历史带图会话在回退模式下也能正常对话，图片块自动替换为附件标记
-- **每次调用透明**：返回 provider、model、延迟、token usage、fallback 标记，成本可审计
+## Core Experience
 
-## 已实现功能
+- **Paste and see**: takes over the `deepseek-official` route so images enter the conversation natively; when takeover is unavailable it automatically falls back to path-based paste, so new images always get through
+- **Model picks the tool, plugin routes the model**: `mindseye_read_image`, `mindseye_ocr`, `mindseye_ground`, and `mindseye_colors` each carry a fixed intent; the model chooses by the user's question and the plugin maps the tool to the matching model chain
+- **Generated images appear in the conversation**: `mindseye_generate_image` delegates to a dedicated image generation model and returns the result as a dsh attachment, without auto-saving to the project or running automatic verification
+- **Automatic mounting on image turns**: vision tools are registered when an image message arrives; text-only turns keep only one activation entry so tools do not occupy model context permanently
+- **Batch reads in one call**: multiple images are read together, with exponential split fallback on batch 4xx so a failure affects only the failed image
+- **Old sessions stay clean**: image-bearing history remains usable in fallback mode, with image blocks rewritten into attachment markers
+- **Every call is transparent**: provider, model, latency, token usage, and fallback markers are returned for auditability
 
-### 图片入口
+## Screenshots
 
-- 原生粘贴/拖拽（接管模式，模型选择器无分身）
-- `paste-to-path` 兜底：文本模型场景下自动把粘贴转为路径文本
-- `mindseye_read_image` 通用看图，支持本地路径、单张附件 id、批量附件 id
+![Vision](assets/ScreenShot_vision.png)
 
-### 工具与路由
+![Generate](assets/ScreenShot_generate_image.png)
 
-| 工具 | 意图 | 路由 | 批量 |
+## Implemented Features
+
+### Image Input
+
+- Native paste/drag (takeover mode, no duplicate model selector entry)
+- `paste-to-path` fallback: pasted images are converted to path text in text-only model scenarios
+- `mindseye_read_image` general vision, supporting local paths, single attachment ids, and batch attachment ids
+
+### Tools and Routing
+
+| Tool | Intent | Route | Batch |
 | --- | --- | --- | --- |
-| `mindseye_read_image` | 通用视觉问答 | understand | 支持 |
-| `mindseye_ocr` | 逐字文字提取 | extract | 支持 |
-| `mindseye_ground` | 目标像素坐标定位 | locate | 不支持 |
-| `mindseye_colors` | 整图主色板 | understand | 支持 |
+| `mindseye_read_image` | General visual QA | understand | Yes |
+| `mindseye_ocr` | Exact text extraction | extract | Yes |
+| `mindseye_ground` | Target pixel coordinate location | locate | No |
+| `mindseye_colors` | Whole-image palette | understand | Yes |
 
-- `understand / extract / locate` 三档模型路由可分别配置，未配置时自动回退到通用理解模型
-- 图片轮自动挂载视觉工具；纯文本轮只保留 `mindseye_vision_activate` 作为激活入口，工具不会常驻挤占模型上下文
-- 结构化 JSON：`images` / `evidence` / `answer` / `meta`，`meta` 含真实 token usage、调用尝试与回退标记
-- 精确缓存：图片 sha256 + 归一化问题 + region + baseUrl + model + prompt 版本，命中时不再调用视觉模型
+- `understand / extract / locate` model routes are independently configurable and fall back to the general understanding model when unset
+- Vision tools auto-mount on image turns; text-only turns keep only `mindseye_vision_activate` so tools do not permanently consume model context
+- Structured JSON: `images` / `evidence` / `answer` / `meta`; `meta` includes real token usage, call attempts, and fallback markers
+- Exact cache: image sha256 + normalized query + region + baseUrl + model + prompt version; a hit skips the vision model call
 
-### 图片生成
+### Image Generation
 
-- `mindseye_generate_image(subject, context?)`：文本模型按用户要求委托专用图片生成模型
-- `request` 由插件自动读取用户最新消息原文，模型不提供、不改写；`subject` 必填，由模型从对话提取主体；`context` 可选，只补风格或约束背景
-- 生成结果作为 dsh 附件直接显示在会话中，附带 `(token_usage=..., 宽x高, 大小)` 审计行
-- 支持 OpenAI-compatible `/images/generations`，`b64_json` 或下载型 URL 均校验后落为附件；不自动保存到项目路径，不自动调用视觉工具回验
+- `mindseye_generate_image(subject, context?)`: the text model delegates image generation to a dedicated model
+- `request` is read automatically from the latest user message by the plugin; the model neither provides nor rewrites it. `subject` is required and extracted by the model from the conversation; `context` is optional and only carries style or constraint background
+- Generated results are displayed in the conversation as dsh attachments with a `(token_usage=..., widthxheight, size)` audit line
+- Supports OpenAI-compatible `/images/generations`; `b64_json` and downloadable URLs are validated before being stored as attachments; nothing is auto-saved to the project path and no vision tool is called back to verify
 
-### Provider
+### Providers
 
-- OpenAI-compatible Chat Completions 与 Responses 协议
-- 多路由 fallback 链，失败自动切换
-- 多图批量调用 + 指数降级（批量 4xx 按半数拆分重试，`locate` 不支持批量）
+- OpenAI-compatible Chat Completions and Responses protocols
+- Multi-route fallback chains with automatic failover
+- Multi-image batch calls with exponential fallback (batch 4xx retries by halving; `locate` does not support batch)
 
-### 记忆
+### Memory
 
-- 图片级硬事实按 sha256 持久化，evidence 按容量 LRU 淘汰（默认 1000 条）
-- 软记忆 BM25 检索历史问答注入上下文，历史问答按容量滚动淘汰（默认 1000 条）
-- `mindseye_memory_put / get / search / diff` 四个 dsh 工具，调用在会话中可见，并记录审计
+- Image-level hard facts are persisted by sha256, with evidence evicted by capacity LRU (default 1000 entries)
+- Soft memory uses BM25 retrieval of historical Q&A injected as context, evicted by capacity (default 1000 entries)
+- `mindseye_memory_put / get / search / diff` are exposed as dsh tools; calls are visible in the session and audited
 
-### 数据处理与安全边界
+### Data Handling and Security
 
-- **原生附件优先**：支持图片输入的模型保留 dsh 原生附件；MindsEye 通过附件 ID 关联图片，不要求用户手动选择本地文件。
-- **自动临时路径降级**：当当前模型被确认是文本模型时，启用的 `paste-to-path` 会校验用户刚粘贴的 PNG、JPEG、WebP 或 GIF（单张最多 25 MiB），保存到独立的系统临时目录并自动返回分配的路径。临时文件以 `0600` mode 创建，用户无需手动提供路径。
-- **外部视觉调用**：只有执行任一 MindsEye 视觉工具并调用用户配置的视觉 Provider 时，图片字节与问题内容才会发送到该 Provider 的 Base URL。用户应仅配置自己信任的服务。
-- **凭据与缓存**：API Key 从环境变量、dsh Credentials 或插件设置解析，并仅以 Bearer 认证发送给对应 Provider。精确缓存只保存在当前 dsh 进程内存，最多 500 条；它不写入持久化数据库，并会在进程退出时清空。
-- **执行边界**：插件不启动 shell、子进程或下载后执行代码。正常 Web 粘贴降级只读取插件刚为该次粘贴生成的临时图片；工具接口也支持 dsh 附件 ID。
+- **Native attachments first**: image-capable models keep native dsh attachments; MindsEye associates images by attachment id and does not ask the user to choose local files manually
+- **Automatic temporary path fallback**: when the current model is confirmed text-only and `paste-to-path` is enabled, freshly pasted PNG, JPEG, WebP, or GIF files (up to 25 MiB each) are validated, stored in an isolated system temp directory, and returned as a path. Temp files use `0600` mode
+- **External vision calls**: image bytes and question text are sent only to the vision provider's Base URL when a MindsEye tool executes; configure only services you trust
+- **Credentials and cache**: API keys resolve from environment variables, dsh Credentials, or plugin settings and are sent as Bearer auth to the matching provider only. The exact cache lives only in the current dsh process memory (max 500 entries), is never persisted, and clears on process exit
+- **Execution boundary**: the plugin never starts shells, child processes, or executes downloaded code. The normal web paste fallback only reads the temporary image just created by the plugin; tools also accept dsh attachment ids
 
-### dsh Web 设置卡
+### dsh Web Settings Card
 
-- `understand / extract / locate` 三条路由，按需添加，未配置自动回退默认模型
-- Base URL、API Key（脱敏 + 眼睛切换）、模型 ID、协议（显式选择）、Max Tokens 常用值下拉
-- 模型接管默认开启：修改后重启生效，启动失败自动恢复官方适配器并降级为路径粘贴
+- `understand / extract / locate` routes can be added as needed; unset routes fall back to the default model
+- Base URL, API key (masked with eye toggle), model id, protocol (explicit), and common Max Tokens values
+- Model takeover is enabled by default: changes take effect after restart, and a failed startup restores the official adapter with path-paste fallback
 
-## 安装
+## Installation
 
 ```sh
 npx @deepseek-ai/dsh plugin --profile web add dsh-mindseye
 ```
 
-重启 dsh web 即可原生粘贴图片。“模型接管”默认开启，可在 Settings → Plugins → MindsEye 中调整。
+Restart dsh web to paste images natively. "Model takeover" is enabled by default and can be adjusted under Settings → Plugins → MindsEye.
 
-首次使用请在 MindsEye 设置卡中配置一个通用视觉模型（Base URL、API Key、模型 ID）；未配置的 OCR / 定位路由会自动回退到通用模型。
+On first use, configure one general vision model (Base URL, API key, model id) in the MindsEye settings card; unconfigured OCR / locate routes fall back to the general model automatically.
 
-## 开发
+## Development
 
 ```sh
 pnpm install
