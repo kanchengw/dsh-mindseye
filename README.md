@@ -8,7 +8,6 @@
 
 [English](README.md) | [中文](README.zh-CN.md)
 
-Current version: 0.2.2
 Current version: 0.2.3
 
 MindsEye is a vision plugin for DeepSeek Harness (dsh). Pasted images stay visible in the conversation while DeepSeek keeps reasoning and the vision model does the seeing. The plugin exposes task-specific vision tools that the model selects by intent; each tool maps to a fixed intent and model route, returns structured JSON, and reduces repeated calls through caching and evidence reuse.
