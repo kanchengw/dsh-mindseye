@@ -17,7 +17,7 @@ export interface MindsEyeConfig {
   userNotice?: boolean
   routes?: Partial<Record<RouteKind, VisionRoute[]>>
   fallbacks?: VisionRoute[]
-  image?: { routes?: ImageGenerationRoute[] }
+  image?: { routes?: ImageGenerationRoute[]; edits?: ImageGenerationRoute[] }
 }
 
 const routeSchema = z.object({
@@ -48,7 +48,8 @@ export const Config: Schema<MindsEyeConfig> = z.object({
   fallbacks: z.array(routeSchema).default([]),
   image: z.object({
     routes: z.array(imageRouteSchema).default([]),
-  }).default({ routes: [] }),
+    edits: z.array(imageRouteSchema).default([]),
+}).default({ routes: [], edits: [] }),
 })
 
 export function resolveMindsEyeConfig(

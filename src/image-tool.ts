@@ -12,8 +12,11 @@ export const IMAGE_GENERATION_REQUEST_VERSION = 'mindseye-image-generation-v1'
 
 export interface ImageGenerationToolInput {
   request: string
-  subject: string
   context?: string
+  historyContext?: string[]
+  toolResults?: string[]
+  size?: string
+  image?: { data: Uint8Array; mediaType: GeneratedImageMediaType }
 }
 
 export interface SavedGeneratedImage {
@@ -96,15 +99,24 @@ function normalizeImageGenerationSpec(
   if (routes.length === 0) throw new Error('mindseye_generate_image: no image generation route configured')
   const request = input.request.trim()
   if (request === '') throw new Error('mindseye_generate_image: request is required')
-  const subject = input.subject?.trim() ?? ''
-  if (subject === '') throw new Error('mindseye_generate_image: subject is required')
   const context = input.context?.trim() ?? ''
-  const prompt = context === ''
-    ? `主题：${subject}\n用户本次需求：${request}`
-    : `主题：${subject}\n用户本次需求：${request}\n上下文：${context}`
+  const history = input.historyContext ?? []
+  const toolResults = input.toolResults ?? []
+  const parts = [`用户本次需求：${request}`]
+  if (context !== '') parts.push(`上下文：${context}`)
+  if (history.length > 0) {
+    parts.push(`历史上下文（用户原文，供核对引用）：\n${history.map((text, index) => `${index + 1}. ${text}`).join('\n')}`)
+  }
+  if (toolResults.length > 0) {
+    parts.push(`识图/生成历史结果（供核对引用）：\n${toolResults.map((text, index) => `${index + 1}. ${text}`).join('\n')}`)
+  }
+  const prompt = parts.join('\n')
   if (prompt.length > 4_000) throw new Error('mindseye_generate_image: combined request and context exceeds 4000 characters')
+  const size = input.size?.trim()
   return {
     prompt,
     requestVersion: IMAGE_GENERATION_REQUEST_VERSION,
+    ...(size === undefined || size === '' ? {} : { size }),
+    ...(input.image === undefined ? {} : { image: input.image }),
   }
 }

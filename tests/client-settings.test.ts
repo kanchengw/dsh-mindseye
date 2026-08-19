@@ -47,19 +47,14 @@ describe('client settings codec', () => {
     expect(encoded.routes.understand[0]?.protocol).toBe('chat-completions')
   })
 
-  it('round-trips image primary and fallback routes independently from vision routes', () => {
+  it('round-trips only the image primary route and drops fallback slots', () => {
     const draft = decodeSettings({
       image: { routes: [completeImageRoute, { ...completeImageRoute, model: 'doubao-seedream-5-0-260128' }] },
     })
     expect(draft.imagePrimary.model).toBe('doubao-seed-2-0-pro-260215')
-    expect(draft.imageFallback.model).toBe('doubao-seedream-5-0-260128')
-
     const encoded = encodeSettings(draft)
     expect(encoded.routes).toEqual({})
-    expect(encoded.image.routes).toEqual([
-      completeImageRoute,
-      { ...completeImageRoute, model: 'doubao-seedream-5-0-260128' },
-    ])
+    expect(encoded.image.routes).toEqual([completeImageRoute])
   })
 
   it('keeps incomplete routes out of saved settings', () => {
@@ -70,14 +65,12 @@ describe('client settings codec', () => {
     expect(encoded.routes).toEqual({})
   })
 
-  it('does not serialize a fallback image route without a complete primary route', () => {
-    const draft = decodeSettings({})
-    const encoded = encodeSettings({
-      ...draft,
-      imageFallback: completeImageRoute,
-    })
 
-    expect(encoded.image.routes).toEqual([])
+  it('round-trips image edit routes', () => {
+    const draft = decodeSettings({ image: { edits: [completeImageRoute] } })
+    expect(draft.imageEdits.model).toBe('doubao-seed-2-0-pro-260215')
+    const encoded = encodeSettings(draft)
+    expect(encoded.image.edits).toEqual([completeImageRoute])
   })
 
   it('validates model, url and credential fields', () => {

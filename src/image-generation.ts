@@ -56,18 +56,37 @@ export async function callImageGenerationProvider(
   options: ImageGenerationProviderOptions,
   fetchImpl: typeof fetch = fetch,
 ): Promise<{ images: GeneratedImage[]; usage?: TokenUsage }> {
+  const endpoint = options.route.baseUrl.replace(/\/+$/, '')
+    .replace(/\/images\/generations$/i, '').replace(/\/images\/edits$/i, '')
+    + `/${options.route.endpoint ?? 'images/generations'}`
+  const bodyMode = options.route.bodyMode ?? 'json'
+  const imageField = options.route.imageField ?? 'image'
+  const headers: Record<string, string> = { authorization: `Bearer ${options.apiKey}` }
+  let requestBody: BodyInit
+  if (bodyMode === 'multipart' && options.spec.image !== undefined) {
+    const form = new FormData()
+    form.append('model', options.route.model)
+    form.append('prompt', options.spec.prompt)
+    if (options.spec.size !== undefined) form.append('size', options.spec.size)
+    form.append(imageField, new Blob([options.spec.image.data as BlobPart], { type: options.spec.image.mediaType }), 'reference.png')
+    requestBody = form
+  } else {
+    headers['content-type'] = 'application/json'
+    requestBody = JSON.stringify({
+      model: options.route.model,
+      prompt: options.spec.prompt,
+      ...(options.spec.size === undefined ? {} : { size: options.spec.size }),
+      ...(options.spec.image === undefined
+        ? {}
+        : { [imageField]: `data:${options.spec.image.mediaType};base64,${Buffer.from(options.spec.image.data).toString('base64')}` }),
+    })
+  }
   const response = await fetchImpl(
-    `${options.route.baseUrl.replace(/\/$/, '')}/images/generations`,
+    endpoint,
     {
       method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        authorization: `Bearer ${options.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: options.route.model,
-        prompt: options.spec.prompt,
-      }),
+      headers,
+      body: requestBody,
       signal: options.signal,
     },
   )

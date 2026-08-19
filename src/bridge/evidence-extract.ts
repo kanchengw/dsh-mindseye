@@ -1,4 +1,5 @@
 import type { VisionIntent, VisualEvidence } from '../types.js'
+import type { EvidenceKind } from '../types.js'
 
 const STRUCTURED_INTENTS = new Set<VisionIntent>(['ocr', 'layout', 'grounding', 'color'])
 
@@ -9,10 +10,15 @@ export function structuredEvidenceIntent(intent: VisionIntent): boolean {
 export function extractStructured(
   text: string,
   intent: VisionIntent,
+  extract?: EvidenceKind[],
 ): { answer: string; evidence: VisualEvidence } | undefined {
-  if (!structuredEvidenceIntent(intent)) return undefined
   const parsed = tryParseJsonObject(text)
   if (parsed === undefined) return undefined
+  if (extract !== undefined && extract.length > 0) {
+    if (typeof parsed.answer !== 'string') return undefined
+    return { answer: parsed.answer, evidence: normalizeEvidence(parsed.evidence) }
+  }
+  if (!structuredEvidenceIntent(intent)) return undefined
   if (intent === 'ocr') {
     const normalized = normalizeOcrAnswer(parsed)
     if (normalized !== undefined) return normalized
@@ -24,9 +30,14 @@ export function extractStructured(
 export function parseStructuredValue(
   value: string,
   intent?: VisionIntent,
+  extract?: EvidenceKind[],
 ): { text: string; evidence: VisualEvidence } | undefined {
   const parsed = tryParseJsonObject(value)
   if (parsed === undefined) return undefined
+  if (extract !== undefined && extract.length > 0) {
+    if (typeof parsed.text !== 'string') return undefined
+    return { text: parsed.text, evidence: normalizeEvidence(parsed.evidence) }
+  }
   if (intent === 'ocr') {
     const normalized = normalizeOcrAnswer(parsed)
     if (normalized !== undefined) {

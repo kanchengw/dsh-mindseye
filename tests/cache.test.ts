@@ -5,6 +5,7 @@ import type { VisionResult } from '../src/types.js'
 const identity: CacheIdentity = {
   sha256: 'abc',
   query: '图片 按钮 数量',
+  intent: 'visual-qa',
   baseUrl: 'https://a/v1',
   model: 'm',
   promptVersion: 'v1',
@@ -26,6 +27,7 @@ describe('cacheKeyOf', () => {
     expect(cacheKeyOf(identity)).toBe(cacheKeyOf({ ...identity }))
     expect(cacheKeyOf({ ...identity, region: '1,2,3,4' })).not.toBe(cacheKeyOf(identity))
     expect(cacheKeyOf({ ...identity, query: 'other' })).not.toBe(cacheKeyOf(identity))
+    expect(cacheKeyOf({ ...identity, extract: ['ocr', 'colors'] })).not.toBe(cacheKeyOf(identity))
   })
 })
 

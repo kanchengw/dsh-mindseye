@@ -387,7 +387,7 @@ function SettingsCard() {
   const [error, setError] = useState(undefined)
   const [addedOverrides, setAddedOverrides] = useState([])
   const [pendingAdd, setPendingAdd] = useState(OVERRIDE_KINDS[0])
-  const [imageFallbackAdded, setImageFallbackAdded] = useState(false)
+  const [imageEditsAdded, setImageEditsAdded] = useState(false)
 
   const load = useCallback(async () => {
     if (loading) return
@@ -406,7 +406,7 @@ function SettingsCard() {
       setDraft(next)
       setBaseline(next)
       setAddedOverrides(OVERRIDE_KINDS.filter((kind) => routeIsComplete(next.overrides[kind])))
-      setImageFallbackAdded(imageRouteHasValues(next.imageFallback))
+      setImageEditsAdded(imageRouteHasValues(next.imageEdits))
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
@@ -430,18 +430,18 @@ function SettingsCard() {
     }
   }
   const imagePrimaryError = draft === undefined ? undefined : optionalImageRouteValidationError(draft.imagePrimary)
-  const imageFallbackError = draft === undefined || !imageFallbackAdded
+  const imageEditsError = draft === undefined || !imageEditsAdded
     ? undefined
-    : optionalImageRouteValidationError(draft.imageFallback)
+    : optionalImageRouteValidationError(draft.imageEdits)
   const hasValidRoute = draft !== undefined && (
     routeIsComplete(draft.defaultRoute) || imageRouteIsComplete(draft.imagePrimary)
   )
-  const validationError = defaultError ?? Object.values(overrideErrors)[0] ?? imagePrimaryError ?? imageFallbackError
+  const validationError = defaultError ?? Object.values(overrideErrors)[0] ?? imagePrimaryError ?? imageEditsError
 
   const discard = () => {
     setDraft(baseline)
     setAddedOverrides(OVERRIDE_KINDS.filter((kind) => routeIsComplete(baseline.overrides[kind])))
-    setImageFallbackAdded(imageRouteHasValues(baseline.imageFallback))
+    setImageEditsAdded(imageRouteHasValues(baseline.imageEdits))
     setError(undefined)
     setStatus('')
   }
@@ -463,15 +463,16 @@ function SettingsCard() {
     setError(undefined)
   }
 
-  const addImageFallback = () => {
-    setImageFallbackAdded(true)
+
+  const addImageEdits = () => {
+    setImageEditsAdded(true)
     setStatus('')
     setError(undefined)
   }
 
-  const removeImageFallback = () => {
-    setDraft((current) => ({ ...current, imageFallback: emptyImageRoute() }))
-    setImageFallbackAdded(false)
+  const removeImageEdits = () => {
+    setDraft((current) => ({ ...current, imageEdits: emptyImageRoute() }))
+    setImageEditsAdded(false)
     setStatus('')
     setError(undefined)
   }
@@ -498,7 +499,7 @@ function SettingsCard() {
       setDraft(next)
       setBaseline(next)
       setAddedOverrides(OVERRIDE_KINDS.filter((kind) => routeIsComplete(next.overrides[kind])))
-      setImageFallbackAdded(imageRouteHasValues(next.imageFallback))
+      setImageEditsAdded(imageRouteHasValues(next.imageEdits))
       setStatus('已保存')
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
@@ -616,9 +617,9 @@ function SettingsCard() {
         React.createElement('section', { key: 'image', className: 'mindseye-section' }, [
           React.createElement('div', { key: 'title', className: 'mindseye-section-title' }, '图片生成'),
           React.createElement('p', { key: 'hint', className: 'mindseye-section-hint' },
-            '主模型生成新图片；仅在额度、限流或网络错误时切换到后备模型。'),
+            '主模型生成新图片；图生图可单独配置模型。'),
           React.createElement('div', { key: 'primary-head', className: 'mindseye-override-head' },
-            React.createElement('span', null, '主模型')),
+            React.createElement('span', null, '文生图模型（主模型）')),
           React.createElement('div', { key: 'primary-body', className: 'mindseye-override-body' }, [
             React.createElement(ImageRouteFields, {
               key: 'fields',
@@ -634,39 +635,39 @@ function SettingsCard() {
               ? null
               : React.createElement('p', { key: 'error', className: 'mindseye-error' }, imagePrimaryError),
           ]),
-          !imageFallbackAdded
-            ? React.createElement('div', { key: 'add', className: 'mindseye-add-row' },
+        !imageEditsAdded
+          ? React.createElement('div', { key: 'add-edits', className: 'mindseye-add-row' },
+            React.createElement('button', {
+              type: 'button',
+              disabled: !writable,
+              onClick: addImageEdits,
+            }, '添加图生图模型'))
+          : [
+            React.createElement('div', { key: 'edits-head', className: 'mindseye-override-head' }, [
+              React.createElement('span', { key: 'title' }, '图生图模型'),
               React.createElement('button', {
+                key: 'remove',
                 type: 'button',
                 disabled: !writable,
-                onClick: addImageFallback,
-              }, '添加后备模型'))
-            : [
-              React.createElement('div', { key: 'fallback-head', className: 'mindseye-override-head' }, [
-                React.createElement('span', { key: 'title' }, '后备模型'),
-                React.createElement('button', {
-                  key: 'remove',
-                  type: 'button',
-                  disabled: !writable,
-                  onClick: removeImageFallback,
-                }, '移除'),
-              ]),
-              React.createElement('div', { key: 'fallback-body', className: 'mindseye-override-body' }, [
-                React.createElement(ImageRouteFields, {
-                  key: 'fields',
-                  value: draft.imageFallback,
-                  disabled: !writable,
-                  onChange: (next) => {
-                    setDraft((current) => ({ ...current, imageFallback: next }))
-                    setStatus('')
-                    setError(undefined)
-                  },
-                }),
-                imageFallbackError === undefined
-                  ? null
-                  : React.createElement('p', { key: 'error', className: 'mindseye-error' }, imageFallbackError),
-              ]),
-            ],
+                onClick: removeImageEdits,
+              }, '移除'),
+            ]),
+            React.createElement('div', { key: 'edits-body', className: 'mindseye-override-body' }, [
+              React.createElement(ImageRouteFields, {
+                key: 'fields',
+                value: draft.imageEdits,
+                disabled: !writable,
+                onChange: (next) => {
+                  setDraft((current) => ({ ...current, imageEdits: next }))
+                  setStatus('')
+                  setError(undefined)
+                },
+              }),
+              imageEditsError === undefined
+                ? null
+                : React.createElement('p', { key: 'error', className: 'mindseye-error' }, imageEditsError),
+            ]),
+          ],
         ]),
         !writable
           ? React.createElement('p', { key: 'readonly', className: 'mindseye-error' }, '当前部署的设置为只读')
@@ -883,12 +884,14 @@ export function apply(ctx) {
       label: () => 'MindsEye',
     }, SettingsCard)
   )
-  ctx.slots.inject('tool.call.toolview', () =>
-    ctx.slots.register({
-      name: 'tool.call.toolview',
-      key: 'mindseye_generate_image',
-      priority: -10,
-      inject: () => ({}),
-    }, GeneratedImageCard)
-  )
+  for (const key of ['mindseye_generate_image', 'mindseye_edit_image']) {
+    ctx.slots.inject('tool.call.toolview', () =>
+      ctx.slots.register({
+        name: 'tool.call.toolview',
+        key,
+        priority: -10,
+        inject: () => ({}),
+      }, GeneratedImageCard)
+    )
+  }
 }

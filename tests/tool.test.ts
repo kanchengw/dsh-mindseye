@@ -30,6 +30,7 @@ describe('readImageWithMindsEye', () => {
     expect(first.result.meta.cache).toBe('miss')
     expect(first.result.answer.text).toBe('answer')
     expect(first.result.meta.usage?.totalTokens).toBe(3)
+    expect(first.result.query).toBe('图中有几个按钮')
 
     const second = await readImageWithMindsEye({ path: '/a.png', query: '图中有几个按钮' }, deps, routes)
     expect(second.fromCache).toBe(true)
@@ -102,8 +103,8 @@ describe('readImageWithMindsEye', () => {
           evidence: { ocr: { fullText: 'hi', language: 'eng' } },
         }) },
       }),
-      buildPrompt: (_intent: unknown, _query?: string, region?: string) => {
-        seenRegion = region
+      buildPrompt: (_intent: unknown, options?: { currentRequest?: string; context?: string; region?: string }) => {
+        seenRegion = options?.region
         return 'prompt'
       },
       toDataUrl: (bytes: Uint8Array, format: string) => `data:image/${format};base64,${Buffer.from(bytes).toString('base64')}`,
@@ -117,6 +118,40 @@ describe('readImageWithMindsEye', () => {
     expect(first.result.evidence).toMatchObject({ ocr: { fullText: 'hi' } })
     expect(first.result.answer.text).toBe('hi')
     expect(seenRegion).toBe('1,2,3,4')
+  })
+
+  it('requests and parses combined evidence in one call', async () => {
+    let seenExtract: unknown
+    const deps = {
+      readImage: async () => new TextEncoder().encode('image-bytes'),
+      probeImage: async () => ({ width: 10, height: 20, format: 'png' }),
+      runVision: async () => ({
+        analysis: { text: JSON.stringify({
+          answer: '海报内容如下',
+          evidence: {
+            ocr: { fullText: '领取免费资源包' },
+            colors: [{ hex: '#e9ebff', share: 0.7 }],
+          },
+        }) },
+      }),
+      buildPrompt: (_intent: unknown, options?: { extract?: unknown }) => {
+        seenExtract = options?.extract
+        return 'combined prompt'
+      },
+      toDataUrl: (bytes: Uint8Array, format: string) => `data:image/${format};base64,${Buffer.from(bytes).toString('base64')}`,
+    }
+    const routes = [{ model: 'm', baseUrl: 'https://p/v1', apiKeyEnv: 'K' }]
+    const first = await readImageWithMindsEye(
+      { path: '/a.png', intent: 'visual-qa', extract: ['ocr', 'colors'], query: '看文字和颜色' },
+      deps,
+      routes,
+    )
+    expect(seenExtract).toEqual(['ocr', 'colors'])
+    expect(first.result.answer.text).toBe('海报内容如下')
+    expect(first.result.evidence).toEqual({
+      ocr: { fullText: '领取免费资源包' },
+      colors: [{ hex: '#e9ebff', share: 0.7 }],
+    })
   })
 
   it('reads multiple images in one batch call', async () => {
@@ -511,6 +546,7 @@ describe('cache key matches tool identity', () => {
     const identity: CacheIdentity = {
       sha256: 'abc',
       query: normalizeQuery('图中有几个按钮'),
+      intent: 'visual-qa',
       baseUrl: 'https://p/v1',
       model: 'm',
       promptVersion: 'v1',

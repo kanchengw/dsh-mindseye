@@ -9,24 +9,21 @@
 [English](README.md) | [中文](README.zh-CN.md)
 
 Current version: 0.2.2
+Current version: 0.2.3
 
 MindsEye is a vision plugin for DeepSeek Harness (dsh). Pasted images stay visible in the conversation while DeepSeek keeps reasoning and the vision model does the seeing. The plugin exposes task-specific vision tools that the model selects by intent; each tool maps to a fixed intent and model route, returns structured JSON, and reduces repeated calls through caching and evidence reuse.
 
 ## Core Experience
 
 - **Paste and see**: takes over the `deepseek-official` route so images enter the conversation natively; when takeover is unavailable it automatically falls back to path-based paste, so new images always get through
-- **Model picks the tool, plugin routes the model**: `mindseye_read_image`, `mindseye_ocr`, `mindseye_ground`, and `mindseye_colors` each carry a fixed intent; the model chooses by the user's question and the plugin maps the tool to the matching model chain
+- **Model picks the intent, plugin routes the model**: `mindseye_read_image` takes an `intent` (visual-qa / ocr / layout / chart / color / pixel-diff / general) plus optional `extract` for combined structured evidence in one call; `mindseye_ground` stays separate for coordinates
 - **Generated images appear in the conversation**: `mindseye_generate_image` delegates to a dedicated image generation model and returns the result as a dsh attachment, without auto-saving to the project or running automatic verification
 - **Automatic mounting on image turns**: vision tools are registered when an image message arrives; text-only turns keep only one activation entry so tools do not occupy model context permanently
 - **Batch reads in one call**: multiple images are read together, with exponential split fallback on batch 4xx so a failure affects only the failed image
 - **Old sessions stay clean**: image-bearing history remains usable in fallback mode, with image blocks rewritten into attachment markers
 - **Every call is transparent**: provider, model, latency, token usage, and fallback markers are returned for auditability
 
-## Screenshots
-
-![Vision](assets/ScreenShot_vision.png)
-
-![Generate](assets/ScreenShot_generate_image.png)
+![Interaction](assets/ScreenShot_interaction.png)
 
 ## Implemented Features
 
@@ -40,10 +37,8 @@ MindsEye is a vision plugin for DeepSeek Harness (dsh). Pasted images stay visib
 
 | Tool | Intent | Route | Batch |
 | --- | --- | --- | --- |
-| `mindseye_read_image` | General visual QA | understand | Yes |
-| `mindseye_ocr` | Exact text extraction | extract | Yes |
+| `mindseye_read_image` | General vision QA + `intent` tasks (ocr / layout / chart / color / pixel-diff / general), optional `extract` for combined evidence | understand / extract per intent | Yes |
 | `mindseye_ground` | Target pixel coordinate location | locate | No |
-| `mindseye_colors` | Whole-image palette | understand | Yes |
 
 - `understand / extract / locate` model routes are independently configurable and fall back to the general understanding model when unset
 - Vision tools auto-mount on image turns; text-only turns keep only `mindseye_vision_activate` so tools do not permanently consume model context
@@ -52,15 +47,16 @@ MindsEye is a vision plugin for DeepSeek Harness (dsh). Pasted images stay visib
 
 ### Image Generation
 
-- `mindseye_generate_image(subject, context?)`: the text model delegates image generation to a dedicated model
-- `request` is read automatically from the latest user message by the plugin; the model neither provides nor rewrites it. `subject` is required and extracted by the model from the conversation; `context` is optional and only carries style or constraint background
-- Generated results are displayed in the conversation as dsh attachments with a `(token_usage=..., widthxheight, size)` audit line
-- Supports OpenAI-compatible `/images/generations`; `b64_json` and downloadable URLs are validated before being stored as attachments; nothing is auto-saved to the project path and no vision tool is called back to verify
+- `mindseye_generate_image(intentId)`: text-to-image through `image.routes`
+- `mindseye_edit_image(intentId, attachmentId)`: image-to-image through `image.edits`, sending the reference image to the provider
+- Generated results are displayed as dsh attachments with a `(token_usage=..., widthxheight, size)` audit line
+
 
 ### Providers
 
 - OpenAI-compatible Chat Completions and Responses protocols
-- Multi-route fallback chains with automatic failover
+- `image.routes` drives `mindseye_generate_image` (text-to-image); `image.edits` drives `mindseye_edit_image` (image-to-image with a reference attachment)
+- Image routes expose configurable `endpoint`, `bodyMode` (`json` or `multipart`), and `imageField` for provider compatibility
 - Multi-image batch calls with exponential fallback (batch 4xx retries by halving; `locate` does not support batch)
 
 ### Memory

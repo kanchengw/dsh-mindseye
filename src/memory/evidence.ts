@@ -1,5 +1,5 @@
 import { normalizeEvidence } from '../bridge/evidence-extract.js'
-import type { VisualEvidence, VisionIntent } from '../types.js'
+import type { EvidenceKind, VisualEvidence, VisionIntent } from '../types.js'
 import type { VisualEvidenceRecord } from './types.js'
 
 /**
@@ -26,6 +26,30 @@ export function pureEvidenceAnswer(
     return { text: formatWholeImageColors(record.colors), evidence: { colors: record.colors } }
   }
   return undefined
+}
+
+/**
+ * Combined extraction: only when every requested evidence kind is already
+ * stored can the answer be served without another provider call.
+ */
+export function pureExtractEvidenceAnswer(
+  extract: EvidenceKind[],
+  record: VisualEvidenceRecord,
+): { text: string; evidence: VisualEvidence } | undefined {
+  const evidence: VisualEvidence = {}
+  for (const kind of extract) {
+    if (kind === 'ocr' && record.ocr !== undefined) {
+      evidence.ocr = record.ocr
+    } else if (kind === 'layout' && record.layout !== undefined) {
+      evidence.layout = record.layout
+    } else if (kind === 'colors' && record.colors !== undefined && record.colors.length > 0) {
+      evidence.colors = record.colors
+    } else {
+      return undefined
+    }
+  }
+  if (Object.keys(evidence).length === 0) return undefined
+  return { text: JSON.stringify(evidence, null, 2), evidence }
 }
 
 const COLOR_KEYWORDS = /颜色|配色|色板|色系|色调|主色|色彩|palette|colors?/i

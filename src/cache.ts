@@ -3,6 +3,10 @@ import type { VisionResult } from './types.js'
 export interface CacheIdentity {
   sha256: string
   query: string
+  intent: VisionResult['intent']
+  extract?: string[]
+  context?: string
+  historyContext?: string[]
   region?: string
   baseUrl: string
   model: string
@@ -19,6 +23,10 @@ export function cacheKeyOf(identity: CacheIdentity): string {
   return JSON.stringify([
     identity.sha256,
     identity.query,
+    identity.intent,
+    (identity.extract ?? []).join(','),
+    identity.context ?? '',
+    (identity.historyContext ?? []).join('\n'),
     identity.region ?? '',
     identity.baseUrl,
     identity.model,

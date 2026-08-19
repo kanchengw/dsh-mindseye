@@ -11,6 +11,11 @@ export const VISION_INTENTS = [
 
 export type VisionIntent = typeof VISION_INTENTS[number]
 
+export const EVIDENCE_KINDS = ['ocr', 'layout', 'colors'] as const
+
+export type EvidenceKind = typeof EVIDENCE_KINDS[number]
+
+
 export const ROUTE_KINDS = ['understand', 'extract', 'locate'] as const
 
 export type RouteKind = typeof ROUTE_KINDS[number]
@@ -40,11 +45,16 @@ export interface ImageGenerationRoute {
   model: string
   baseUrl: string
   apiKeyEnv: string
+  endpoint?: string
+  bodyMode?: 'json' | 'multipart'
+  imageField?: string
 }
 
 export interface ImageGenerationSpec {
   prompt: string
   requestVersion: string
+  size?: string
+  image?: { data: Uint8Array; mediaType: string }
 }
 
 export type GeneratedImageMediaType = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
@@ -150,6 +160,9 @@ export interface VisionReadOptions {
   agent?: unknown
   intent?: VisionIntent
   query?: string
+  extract?: EvidenceKind[]
+  context?: string
+  historyContext?: string[]
   region?: string
   model?: string
   fallback?: string

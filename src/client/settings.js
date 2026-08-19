@@ -1,7 +1,7 @@
 export const OVERRIDE_KINDS = ['extract', 'locate']
 
 export const OVERRIDE_LABELS = {
-  extract: '文字提取（mindseye_ocr）',
+  extract: '文字提取路由（OCR）',
   locate: '空间定位（mindseye_ground）',
 }
 
@@ -56,6 +56,9 @@ export function decodeSettings(section) {
   const imageRoutes = value.image && typeof value.image === 'object' && Array.isArray(value.image.routes)
     ? value.image.routes
     : []
+  const imageEditsRoutes = value.image && typeof value.image === 'object' && Array.isArray(value.image.edits)
+    ? value.image.edits
+    : []
   const understandRoute = Array.isArray(routes.understand)
     ? routes.understand[0]
     : fallbacks[0]
@@ -68,7 +71,7 @@ export function decodeSettings(section) {
     defaultRoute: configRouteToDraft(understandRoute),
     overrides,
     imagePrimary: configImageRouteToDraft(imageRoutes[0]),
-    imageFallback: configImageRouteToDraft(imageRoutes[1]),
+    imageEdits: configImageRouteToDraft(imageEditsRoutes[0]),
     takeover: value.takeover === true,
   }
 }
@@ -184,14 +187,17 @@ export function encodeSettings(draft) {
   const imageRoutes = imageRouteIsComplete(draft.imagePrimary)
     ? [
         imageRouteToConfig(draft.imagePrimary),
-        ...(imageRouteIsComplete(draft.imageFallback) ? [imageRouteToConfig(draft.imageFallback)] : []),
       ]
+    : []
+  const imageEditsRoutes = imageRouteIsComplete(draft.imageEdits)
+    ? [imageRouteToConfig(draft.imageEdits)]
     : []
   return {
     routes,
     fallbacks: [],
     image: {
       routes: imageRoutes,
+      edits: imageEditsRoutes,
     },
     ...(draft.takeover === true ? { takeover: true } : {}),
   }

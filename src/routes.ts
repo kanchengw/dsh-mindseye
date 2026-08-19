@@ -12,6 +12,8 @@ export function routeKindForIntent(intent: VisionIntent): RouteKind {
   return 'understand'
 }
 
+
+
 export function resolveRoutes(
   config: RoutingConfig,
   kind: RouteKind,

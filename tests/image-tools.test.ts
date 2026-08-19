@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  createImageEditTool,
   createImageGenerationTool,
 } from '../src/image-tools.js'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
@@ -19,9 +20,10 @@ describe('image generation tool', () => {
       generate,
       saveImage: vi.fn(),
       probeImage: () => ({ width: 1, height: 1, format: 'png' }),
+      loadPrepared: () => ({ currentRequest: 'a red eye' }),
     })
 
-    await expect(tool.execute({ request: 'a red eye', subject: 'eye logo' }, {} as never))
+    await expect(tool.execute({ intentId: 'intent-1' }, {} as never))
       .rejects.toThrow('no image generation route configured')
     expect(generate).not.toHaveBeenCalled()
   })
@@ -43,16 +45,47 @@ describe('image generation tool', () => {
         height: 1,
       } as ImageAttachmentRef),
       probeImage: () => ({ width: 1, height: 1, format: 'png' }),
+      loadPrepared: () => ({
+        currentRequest: 'a red eye',
+        context: '主题是眼睛概念 logo',
+      }),
     })
 
     const result = await tool.execute({
-      request: 'a red eye',
-      subject: 'eye logo',
-      context: '主题是眼睛概念 logo',
+      intentId: 'intent-2',
     }, {} as never) as {
       images: Array<{ attachmentId?: string }>
     }
     expect(result.images[0]?.attachmentId).toBe('generated-1')
+  })
+
+  it('requires an intentId from mindseye_plan', async () => {
+    const generate = vi.fn()
+    const tool = createImageGenerationTool({
+      routes: () => [route],
+      generate,
+      saveImage: vi.fn(),
+      probeImage: () => ({ width: 1, height: 1, format: 'png' }),
+    })
+
+    await expect(tool.execute({}, {} as never))
+      .rejects.toThrow('missing required property "intentId"')
+    expect(generate).not.toHaveBeenCalled()
+  })
+
+  it('rejects a stale or invalid intentId', async () => {
+    const generate = vi.fn()
+    const tool = createImageGenerationTool({
+      routes: () => [route],
+      generate,
+      saveImage: vi.fn(),
+      probeImage: () => ({ width: 1, height: 1, format: 'png' }),
+      loadPrepared: () => undefined,
+    })
+
+    await expect(tool.execute({ intentId: 'stale' }, {} as never))
+      .rejects.toThrow('intentId 无效或已失效')
+    expect(generate).not.toHaveBeenCalled()
   })
 
   it('uses the latest user message as the request instead of model-provided text', async () => {
@@ -73,6 +106,10 @@ describe('image generation tool', () => {
         height: 1,
       } as ImageAttachmentRef),
       probeImage: () => ({ width: 1, height: 1, format: 'png' }),
+      loadPrepared: () => ({
+        currentRequest: '换个风格',
+        context: '主题是眼睛概念 logo',
+      }),
     })
     const exec = {
       agent: {
@@ -94,13 +131,11 @@ describe('image generation tool', () => {
     }
 
     await tool.execute({
-      request: 'A long expanded English description that must be ignored',
-      subject: '眼睛概念 logo',
-      context: '主题是眼睛概念 logo',
+      intentId: 'intent-3',
     }, exec as never)
 
     expect(generate).toHaveBeenCalledWith({
-      prompt: '主题：眼睛概念 logo\n用户本次需求：换个风格\n上下文：主题是眼睛概念 logo',
+      prompt: '用户本次需求：换个风格\n上下文：主题是眼睛概念 logo',
       requestVersion: 'mindseye-image-generation-v1',
     }, [route], exec.signal)
   })
@@ -124,17 +159,14 @@ describe('image generation tool', () => {
       }),
       saveImage: async () => attachment as unknown as ImageAttachmentRef,
       probeImage: () => ({ width: 1, height: 1, format: 'png' }),
+      loadPrepared: () => ({ currentRequest: '线条简单一点' }),
     })
     const value = await tool.execute({
-      request: '线条简单一点',
-      subject: 'eye logo',
-      context: '主题是眼睛概念 logo',
+      intentId: 'intent-4',
     }, {} as never)
 
     expect(tool.output.render({
-      request: '线条简单一点',
-      subject: 'eye logo',
-      context: '主题是眼睛概念 logo',
+      intentId: 'intent-4',
     }, value as never)).toEqual([
       {
         type: 'text',
@@ -145,9 +177,7 @@ describe('image generation tool', () => {
     ])
 
     expect(tool.output.presentationMeta!({
-      request: '线条简单一点',
-      subject: 'eye logo',
-      context: '主题是眼睛概念 logo',
+      intentId: 'intent-4',
     }, value as never)).toEqual({
       images: [{
         attachment,
@@ -157,20 +187,14 @@ describe('image generation tool', () => {
       usage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 },
     })
     expect(tool.presentResult!({
-      request: '线条简单一点',
-      subject: 'eye logo',
-      context: '主题是眼睛概念 logo',
+      intentId: 'intent-4',
     }, {
       content: tool.output.render({
-        request: '线条简单一点',
-        subject: 'eye logo',
-        context: '主题是眼睛概念 logo',
+        intentId: 'intent-4',
       }, value as never),
       isError: false,
       meta: tool.output.presentationMeta!({
-        request: '线条简单一点',
-        subject: 'eye logo',
-        context: '主题是眼睛概念 logo',
+        intentId: 'intent-4',
       }, value as never),
     })).toEqual({
       card: 'generic',
@@ -179,6 +203,46 @@ describe('image generation tool', () => {
         { type: 'text', text: '(token_usage=5, 1x1, 8B)' },
       ],
     })
+  })
+})
+
+describe('image edit tool', () => {
+  it('loads the reference image and routes through editsRoutes', async () => {
+    const editRoute = { ...route, model: 'edit-model' }
+    const generate = vi.fn(async () => ({
+      images: [{ data: new Uint8Array([0x89, 0x50, 0x4e, 0x47]), mediaType: 'image/png' as const }],
+      provider: 'images.example',
+      model: 'edit-model',
+      attempts: [],
+    }))
+    const onGenerated = vi.fn()
+    const tool = createImageEditTool({
+      routes: () => [route],
+      editsRoutes: () => [editRoute],
+      generate,
+      readImage: async () => new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+      probeImage: () => ({ width: 1, height: 1, format: 'png' }),
+      saveImage: async () => ({
+        attachmentId: 'generated-1',
+        mediaType: 'image/png',
+        bytes: 8,
+        width: 1,
+        height: 1,
+      } as ImageAttachmentRef),
+      loadPrepared: () => ({ currentRequest: '改成浅色' }),
+      onGenerated,
+    })
+    const exec = { agent: { session: {} }, signal: new AbortController().signal }
+    await tool.execute({ intentId: 'edit-1', attachmentId: 'sha256:abc' }, exec as never)
+    expect(generate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: expect.stringContaining('改成浅色'),
+        image: expect.objectContaining({ mediaType: 'image/png' }),
+      }),
+      [editRoute],
+      exec.signal,
+    )
+    expect(onGenerated).toHaveBeenCalledOnce()
   })
 })
 

@@ -6,12 +6,24 @@ import { buildImageInfo, fingerprintBytes } from './evidence.js'
 import { normalizeBaseUrl, routeLabel } from './route.js'
 import type { BatchVisionResult } from './providers.js'
 import type { VisionIntent } from './types.js'
+import type { EvidenceKind } from './types.js'
 import { extractStructured, parseStructuredValue } from './bridge/evidence-extract.js'
 import { buildUserNotice } from './bridge/notice.js'
 import { evidenceContextOf, evidenceToRecord, pureEvidenceAnswer } from './memory/evidence.js'
+import { pureExtractEvidenceAnswer } from './memory/evidence.js'
 import type { SoftMemoryHit, SoftMemoryQuery, VisualEvidenceRecord } from './memory/types.js'
+import type { PromptOptions } from './prompt.js'
 
 export const PROMPT_VERSION = 'mindseye-v1'
+
+function normalizeExtract(extract: EvidenceKind[] | undefined): EvidenceKind[] {
+  if (!Array.isArray(extract)) return []
+  const kinds: EvidenceKind[] = []
+  for (const value of extract) {
+    if (value === 'ocr' || value === 'layout' || value === 'colors') kinds.push(value)
+  }
+  return [...new Set(kinds)]
+}
 
 export interface CreateVisionToolDeps {
   readImage: (input: { path?: string; attachmentId?: string; agent?: unknown }) => Promise<Uint8Array>
@@ -31,7 +43,7 @@ export interface CreateVisionToolDeps {
     searchSoftMemory?: (query: SoftMemoryQuery) => Promise<SoftMemoryHit[]>
   }
   userNotice?: boolean
-  buildPrompt: (intent: VisionResult['intent'], query?: string, region?: string) => string
+  buildPrompt: (intent: VisionResult['intent'], options?: PromptOptions) => string
   toDataUrl: (bytes: Uint8Array, format: string) => string
 }
 
@@ -53,7 +65,7 @@ export interface CreateBatchVisionToolDeps {
     searchSoftMemory?: (query: SoftMemoryQuery) => Promise<SoftMemoryHit[]>
   }
   userNotice?: boolean
-  buildBatchPrompt: (intent: VisionResult['intent'], ids: string[], query?: string, region?: string) => string
+  buildBatchPrompt: (intent: VisionResult['intent'], ids: string[], options?: PromptOptions) => string
   toDataUrl: (bytes: Uint8Array, format: string) => string
 }
 
@@ -76,6 +88,8 @@ export async function readImageWithMindsEye(
   const image = buildImageInfo({ ...(await deps.probeImage(bytes)), sha256, path: options.path })
   const intent = options.intent ?? 'visual-qa'
   const normalizedQuery = normalizeQuery(options.query)
+  const exactQuery = options.query?.trim() ?? ''
+  const extract = normalizeExtract(options.extract)
   const route = routes[0]
   if (route === undefined) {
     throw new Error('mindseye: no vision route configured')
@@ -83,6 +97,10 @@ export async function readImageWithMindsEye(
   const identity: CacheIdentity = {
     sha256,
     query: normalizedQuery,
+    intent,
+    extract,
+    context: options.context ?? '',
+    historyContext: options.historyContext ?? [],
     region: options.region,
     baseUrl: normalizeBaseUrl(route.baseUrl),
     model: options.model ?? route.model,
@@ -109,12 +127,14 @@ export async function readImageWithMindsEye(
   const stored = deps.memory?.getEvidence(sha256)
   const pureHit = stored === undefined
     ? undefined
-    : pureEvidenceAnswer(intent, stored, options.query)
+    : extract.length > 0
+      ? pureExtractEvidenceAnswer(extract, stored)
+      : pureEvidenceAnswer(intent, stored, options.query)
   if (pureHit !== undefined && stored !== undefined) {
     const result: VisionResult = {
       version: 1,
       intent,
-      ...(normalizedQuery === '' ? {} : { query: normalizedQuery }),
+      ...(exactQuery === '' ? {} : { query: exactQuery }),
       images: [image],
       evidence: pureHit.evidence,
       answer: { text: pureHit.text, structured: pureHit.evidence },
@@ -134,7 +154,13 @@ export async function readImageWithMindsEye(
   }
 
   const started = Date.now()
-  let prompt = deps.buildPrompt(intent, options.query, options.region)
+  let prompt = deps.buildPrompt(intent, {
+    currentRequest: options.query,
+    context: options.context,
+    historyContext: options.historyContext,
+    region: options.region,
+    extract,
+  })
   if (stored !== undefined) {
     prompt += `\n\n已存储的图片证据（图片级，可信，无需重新提取）：\n${JSON.stringify(evidenceContextOf(stored))}`
   }
@@ -156,7 +182,7 @@ export async function readImageWithMindsEye(
     prompt,
     route,
   })
-  const extracted = extractStructured(vision.analysis.text, intent)
+  const extracted = extractStructured(vision.analysis.text, intent, extract)
   if (deps.memory !== undefined && extracted !== undefined && Object.keys(extracted.evidence).length > 0) {
     const storedFields = evidenceToRecord(extracted.evidence)
     if (Object.keys(storedFields).length > 0) {
@@ -179,7 +205,7 @@ export async function readImageWithMindsEye(
   const result: VisionResult = {
     version: 1,
     intent,
-    ...(normalizedQuery === '' ? {} : { query: normalizedQuery }),
+    ...(exactQuery === '' ? {} : { query: exactQuery }),
     images: [image],
     evidence: extracted?.evidence ?? {},
     answer,
@@ -209,6 +235,9 @@ export interface BatchReadOptions {
   agent?: unknown
   intent: VisionIntent
   query?: string
+  extract?: EvidenceKind[]
+  context?: string
+  historyContext?: string[]
   region?: string
   fallback?: string
 }
@@ -222,6 +251,8 @@ export async function readImagesWithMindsEye(
   if (route === undefined) {
     throw new Error('mindseye: no vision route configured')
   }
+  const exactQuery = options.query?.trim() ?? ''
+  const extract = normalizeExtract(options.extract)
   const images: VisionResult['images'] = []
   const pending: Array<{ id: string; dataUrl: string }> = []
   const resultsJson: Record<string, JsonValue> = {}
@@ -236,7 +267,9 @@ export async function readImagesWithMindsEye(
     infoBySha.set(sha256, { width: info.width, height: info.height, format: info.format })
     const stored = deps.memory?.getEvidence(sha256)
     if (stored !== undefined) {
-      const pure = pureEvidenceAnswer(options.intent, stored, options.query)
+      const pure = extract.length > 0
+        ? pureExtractEvidenceAnswer(extract, stored)
+        : pureEvidenceAnswer(options.intent, stored, options.query)
       if (pure !== undefined) {
         matchedEvidenceIds.push(stored.id)
         resultsJson[sha256] = { text: pure.text, evidence: pure.evidence }
@@ -250,6 +283,10 @@ export async function readImagesWithMindsEye(
   const cacheKey = JSON.stringify([
     images.map((image) => image.sha256).sort(),
     normalizeQuery(options.query),
+    options.intent,
+    extract.join(','),
+    options.context ?? '',
+    (options.historyContext ?? []).join('\n'),
     options.region ?? '',
     normalizeBaseUrl(route.baseUrl),
     route.model,
@@ -274,11 +311,17 @@ export async function readImagesWithMindsEye(
   if (pending.length > 0) {
     outcome = await deps.runVisionBatch({
       images: pending,
-      prompt: deps.buildBatchPrompt(options.intent, pending.map((item) => item.id), options.query, options.region),
+      prompt: deps.buildBatchPrompt(options.intent, pending.map((item) => item.id), {
+        currentRequest: options.query,
+        context: options.context,
+        historyContext: options.historyContext,
+        region: options.region,
+        extract,
+      }),
       routes,
     })
     for (const [id, text] of outcome.results) {
-      const structured = parseStructuredValue(text, options.intent)
+      const structured = parseStructuredValue(text, options.intent, extract)
       const evidence = structured?.evidence
       resultsJson[id] = structured === undefined
         ? { text }
@@ -312,7 +355,7 @@ export async function readImagesWithMindsEye(
   const result: VisionResult = {
     version: 1,
     intent: options.intent,
-    ...(normalizeQuery(options.query) === '' ? {} : { query: normalizeQuery(options.query) }),
+    ...(exactQuery === '' ? {} : { query: exactQuery }),
     images,
     evidence: {},
     answer: { text: JSON.stringify(structured, null, 2), structured },

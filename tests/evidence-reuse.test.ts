@@ -5,6 +5,7 @@ import {
   isWholeImageColorQuery,
   pureEvidenceAnswer,
 } from '../src/memory/evidence.js'
+import { pureExtractEvidenceAnswer } from '../src/memory/evidence.js'
 import type { VisualEvidenceRecord } from '../src/memory/types.js'
 
 const record: VisualEvidenceRecord = {
@@ -101,5 +102,20 @@ describe('evidenceContextOf', () => {
       elements: record.elements,
       colors: record.colors,
     })
+  })
+})
+
+describe('pureExtractEvidenceAnswer', () => {
+  it('serves combined evidence only when every requested kind is stored', () => {
+    const result = pureExtractEvidenceAnswer(['ocr', 'layout'], record)
+    expect(result?.evidence).toEqual({
+      ocr: { fullText: 'hello', language: 'eng' },
+      layout: record.layout,
+    })
+  })
+
+  it('returns undefined when a requested kind is missing', () => {
+    expect(pureExtractEvidenceAnswer(['ocr', 'colors'], { ...record, colors: [] })).toBeUndefined()
+    expect(pureExtractEvidenceAnswer(['ocr', 'layout'], { ...record, ocr: undefined })).toBeUndefined()
   })
 })

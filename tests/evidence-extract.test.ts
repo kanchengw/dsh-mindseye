@@ -80,3 +80,32 @@ describe('extractStructured', () => {
     expect(structuredEvidenceIntent('visual-qa')).toBe(false)
   })
 })
+
+describe('extractStructured with extract', () => {
+  it('parses a combined answer and evidence envelope for a semantic intent', () => {
+    const result = extractStructured(JSON.stringify({
+      answer: '海报内容如下',
+      evidence: {
+        ocr: { fullText: '领取免费资源包' },
+        colors: [{ hex: '#e9ebff', share: 0.7 }],
+      },
+    }), 'visual-qa', ['ocr', 'colors'])
+    expect(result?.answer).toBe('海报内容如下')
+    expect(result?.evidence).toEqual({
+      ocr: { fullText: '领取免费资源包' },
+      colors: [{ hex: '#e9ebff', share: 0.7 }],
+    })
+  })
+
+  it('parses combined batch values', () => {
+    const result = parseStructuredValue(JSON.stringify({
+      text: 'ok',
+      evidence: { layout: [{ region: '1,2,3,4', content: 'title' }] },
+    }), 'visual-qa', ['layout'])
+    expect(result?.evidence).toEqual({ layout: [{ region: '1,2,3,4', content: 'title' }] })
+  })
+
+  it('rejects a combined envelope without an answer', () => {
+    expect(extractStructured(JSON.stringify({ evidence: { ocr: { fullText: 'x' } } }), 'visual-qa', ['ocr'])).toBeUndefined()
+  })
+})
