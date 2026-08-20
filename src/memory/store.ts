@@ -50,6 +50,7 @@ export class JsonlMemoryStore {
         this.analyses.push(record)
       }
     }
+    this.evictEvidence()
     this.evictAnalyses()
   }
 

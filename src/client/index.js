@@ -558,27 +558,8 @@ function SettingsCard() {
         React.createElement('p', { className: 'mindseye-error' }, String(error ?? '配置不可用')))
     } else {
       body = React.createElement('div', { key: 'body', className: 'mindseye-body' }, [
-        React.createElement('section', { key: 'takeover', className: 'mindseye-section' }, [
-          React.createElement('div', { key: 'title', className: 'mindseye-section-title' }, '模型接管'),
-          React.createElement('label', { key: 'toggle', className: 'mindseye-toggle' }, [
-            React.createElement('input', {
-              key: 'input',
-              type: 'checkbox',
-              checked: draft.takeover === true,
-              disabled: !writable,
-              onChange: (event) => {
-                setDraft((current) => ({ ...current, takeover: event.target.checked }))
-                setStatus('')
-                setError(undefined)
-              },
-            }),
-            React.createElement('span', { key: 'label' }, '接管 deepseek-official（显示图片，多模态原生模式）'),
-          ]),
-          React.createElement('p', { key: 'hint', className: 'mindseye-section-hint' },
-            '默认开启；修改后需重启生效。启动失败会自动恢复官方适配器，并降级为路径粘贴。'),
-        ]),
         React.createElement('section', { key: 'default', className: 'mindseye-section' }, [
-          React.createElement('div', { key: 'title', className: 'mindseye-section-title' }, '通用理解模型'),
+          React.createElement('div', { key: 'title', className: 'mindseye-section-title' }, '视觉理解'),
           React.createElement('p', { key: 'hint', className: 'mindseye-section-hint' },
             '视觉问答、布局、图表、颜色等语义理解任务都使用这个模型。'),
           React.createElement(RouteFields, {
@@ -619,7 +600,7 @@ function SettingsCard() {
           React.createElement('p', { key: 'hint', className: 'mindseye-section-hint' },
             '主模型生成新图片；图生图可单独配置模型。'),
           React.createElement('div', { key: 'primary-head', className: 'mindseye-override-head' },
-            React.createElement('span', null, '文生图模型（主模型）')),
+            React.createElement('span', null, '文生图模型')),
           React.createElement('div', { key: 'primary-body', className: 'mindseye-override-body' }, [
             React.createElement(ImageRouteFields, {
               key: 'fields',

@@ -8,13 +8,13 @@
 
 [English](README.md) | [中文](README.zh-CN.md)
 
-当前版本：0.2.3
+当前版本：0.2.4
 
 MindsEye 是一个 DeepSeek Harness（dsh）vision 插件。粘贴图片后，图片原样显示在会话里，DeepSeek 继续负责思考，视觉模型负责看图。插件暴露一组按任务拆分的视觉工具，由模型根据用户意图选择工具，每个工具固定映射到对应的意图和模型路由，返回结构化 JSON，并通过缓存与证据复用减少重复开销。
 
 ## 核心体验
 
-- **粘贴即看图**：接管 `deepseek-official` 路由，图片原生进入会话；接管不可用时自动降级为路径粘贴，新图始终能发出去
+- **粘贴即看图**：启动时自动尝试 `deepseek-official` 图片桥接，图片原生进入会话；桥接不可用时自动降级为路径粘贴，新图始终能发出去
 - **模型选意图，插件管路由**：`mindseye_read_image` 用 `intent` 选任务（visual-qa / ocr / layout / chart / color / pixel-diff / general），可加 `extract` 一次拿多种结构化证据；`mindseye_ground` 单独负责坐标定位
 - **生图即所见**：`mindseye_generate_image` 委托专用图片生成模型，结果作为 dsh 附件直接显示在会话中，不自动保存、不自动回验
 - **图片轮自动挂载**：检测到图片消息时自动注册视觉工具；纯文本轮默认只保留一个激活入口，避免常驻占用模型上下文
@@ -29,7 +29,7 @@ MindsEye 是一个 DeepSeek Harness（dsh）vision 插件。粘贴图片后，�
 
 ### 图片入口
 
-- 原生粘贴/拖拽（接管模式，模型选择器无分身）
+- 原生粘贴/拖拽（自动桥接，模型选择器无分身）
 - `paste-to-path` 兜底：文本模型场景下自动把粘贴转为路径文本
 - `mindseye_read_image` 通用看图，支持本地路径、单张附件 id、批量附件 id
 
@@ -47,15 +47,15 @@ MindsEye 是一个 DeepSeek Harness（dsh）vision 插件。粘贴图片后，�
 
 ### 图片生成
 
-- `mindseye_generate_image(intentId)`：文生图，走 `image.routes`
-- `mindseye_edit_image(intentId, attachmentId)`：图生图，走 `image.edits`，把参考图原图交给生图模型
+- `mindseye_generate_image(intentId)`：文生图，走 `image.generate`
+- `mindseye_edit_image(intentId, attachmentId)`：图生图，走 `image.edit`，把参考图原图交给生图模型
 - 生成结果作为 dsh 附件直接显示在会话中，附带 `(token_usage=..., 宽x高, 大小)` 审计行
 
 
 ### Provider
 
 - OpenAI-compatible Chat Completions 与 Responses 协议
-- `image.routes` 驱动 `mindseye_generate_image`（文生图）；`image.edits` 驱动 `mindseye_edit_image`（图生图，带参考图）
+- `vision.fallbacks` 是识别链路的备用模型列表；图片生成和编辑分别使用有序的 `image.generate` / `image.edit` 链路
 - 生图路由支持配置 `endpoint`、`bodyMode`（`json` / `multipart`）、`imageField`，适配不同 provider
 - 多图批量调用 + 指数降级（批量 4xx 按半数拆分重试，`locate` 不支持批量）
 
@@ -77,7 +77,7 @@ MindsEye 是一个 DeepSeek Harness（dsh）vision 插件。粘贴图片后，�
 
 - `understand / extract / locate` 三条路由，按需添加，未配置自动回退默认模型
 - Base URL、API Key（脱敏 + 眼睛切换）、模型 ID、协议（显式选择）、Max Tokens 常用值下拉
-- 模型接管默认开启：修改后重启生效，启动失败自动恢复官方适配器并降级为路径粘贴
+- 启动时总是自动尝试模型桥接；失败后恢复官方适配器并降级为路径粘贴
 
 ## 安装
 
@@ -85,7 +85,7 @@ MindsEye 是一个 DeepSeek Harness（dsh）vision 插件。粘贴图片后，�
 npx @deepseek-ai/dsh plugin --profile web add dsh-mindseye
 ```
 
-重启 dsh web 即可原生粘贴图片。“模型接管”默认开启，可在 Settings → Plugins → MindsEye 中调整。
+重启 dsh web 即可原生粘贴图片。模型桥接自动处理，不提供单独开关。
 
 首次使用请在 MindsEye 设置卡中配置一个通用视觉模型（Base URL、API Key、模型 ID）；未配置的 OCR / 定位路由会自动回退到通用模型。
 

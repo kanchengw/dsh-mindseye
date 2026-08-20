@@ -7,7 +7,7 @@ import { credentialRef, type CredentialProvider } from '@deepseek-ai/dsh-credent
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { ExactVisionCache } from './cache.js'
-import { Config, MINDSEYE_SETTINGS_NAMESPACE, type MindsEyeConfig } from './config.js'
+import { Config, MINDSEYE_SETTINGS_NAMESPACE, resolveMindsEyeConfig, type MindsEyeConfig } from './config.js'
 import { resolveApiKeyValue } from './credentials.js'
 import { resolveRoutes, routeKindForIntent } from './routes.js'
 import { buildBatchPrompt, buildPrompt } from './prompt.js'
@@ -37,20 +37,49 @@ export const name = 'mindseye'
 export const inject = ['tools', 'attachments']
 
 export async function apply(ctx: Context, config: MindsEyeConfig = {}): Promise<void> {
-  let currentConfig: MindsEyeConfig = config
+  let currentConfig: MindsEyeConfig = resolveMindsEyeConfig(config)
   let settingsWritable = true
   let credentials: CredentialProvider | undefined
-  let persistSettings: ((section: { routes: unknown; fallbacks: unknown; image: unknown }) => Promise<void>) | undefined
+  let persistSettings: ((section: { vision: unknown; image: unknown }) => Promise<void>) | undefined
   let imageRefs = new Map<string, ImageAttachmentLike>()
-  const preparedIntents = new Map<string, { session: unknown; prepared: PreparedGeneration }>()
+  const preparedIntents = new Map<string, { session: unknown; prepared: PreparedGeneration; lastAccessedAt: number }>()
+  const PREPARED_TTL_MS = 10 * 60 * 1000
+  const PREPARED_MAX = 32
+  const MAX_TOOL_RESULTS = 4
+  const MAX_TOOL_RESULT_CHARS = 800
+  const MAX_TOOL_RESULTS_CHARS = 2400
+  const prunePrepared = (): void => {
+    const now = Date.now()
+    for (const [id, entry] of preparedIntents) {
+      if (now - entry.lastAccessedAt > PREPARED_TTL_MS) preparedIntents.delete(id)
+    }
+    while (preparedIntents.size > PREPARED_MAX) {
+      const oldest = [...preparedIntents.entries()].sort((a, b) => a[1].lastAccessedAt - b[1].lastAccessedAt)[0]
+      if (oldest === undefined) break
+      preparedIntents.delete(oldest[0])
+    }
+  }
   const loadPrepared = (intentId: string, session: unknown): PreparedGeneration | undefined => {
+    prunePrepared()
     const entry = preparedIntents.get(intentId)
-    return entry === undefined || entry.session !== session ? undefined : entry.prepared
+    if (entry === undefined || entry.session !== session) return undefined
+    entry.lastAccessedAt = Date.now()
+    return entry.prepared
+  }
+  const clearPrepared = (intentId: string, session: unknown): void => {
+    const entry = preparedIntents.get(intentId)
+    if (entry !== undefined && entry.session === session) preparedIntents.delete(intentId)
   }
   const appendToolResult = (intentId: string, session: unknown, text: string): void => {
+    prunePrepared()
     const entry = preparedIntents.get(intentId)
     if (entry === undefined || entry.session !== session) return
-    entry.prepared.toolResults = [...(entry.prepared.toolResults ?? []), text]
+    const clipped = text.length > MAX_TOOL_RESULT_CHARS
+      ? `${text.slice(0, MAX_TOOL_RESULT_CHARS)}…`
+      : text
+    const results = [...(entry.prepared.toolResults ?? []), clipped].slice(-MAX_TOOL_RESULTS)
+    while (results.join('\n').length > MAX_TOOL_RESULTS_CHARS && results.length > 1) results.shift()
+    entry.prepared.toolResults = results
   }
   const cache = new ExactVisionCache(config.cacheMaxEntries ?? 500, Number.POSITIVE_INFINITY)
   const metrics = new MetricsCollector()
@@ -61,8 +90,16 @@ export async function apply(ctx: Context, config: MindsEyeConfig = {}): Promise<
       })
   if (memoryStore !== undefined) await memoryStore.init()
 
-  const mode = process.env.MINDSEYE_MODE?.trim().toLowerCase()
-  await new Promise<void>((resolve) => {
+  const takeover = (async () => {
+    ctx.logger?.info('mindseye: takeover enabled by default')
+    const bridge = await runTakeover(ctx)
+    imageRefs = bridge.imageRefs
+    if (bridge.kind === 'skipped') {
+      ctx.logger?.warn('mindseye: takeover unavailable; continuing in official adapter mode')
+    }
+  })()
+
+  const settingsReady = new Promise<void>((resolve) => {
     let settled = false
     const finish = (): void => {
       if (settled) return
@@ -79,37 +116,21 @@ export async function apply(ctx: Context, config: MindsEyeConfig = {}): Promise<
         Config,
         { base: config },
       )
-      currentConfig = scope.get() as MindsEyeConfig
+      currentConfig = resolveMindsEyeConfig(scope.get() as MindsEyeConfig)
       settingsWritable = settingsCtx.settings.writable
       persistSettings = async (section) => {
         await settingsCtx.settings.replace(MINDSEYE_SETTINGS_NAMESPACE, section)
       }
       scope.watch(() => {
-        currentConfig = scope.get() as MindsEyeConfig
+        currentConfig = resolveMindsEyeConfig(scope.get() as MindsEyeConfig)
         syncImageTools()
       })
 
-      const takeoverEnabled = mode === 'takeover'
-        ? true
-        : mode === 'passthrough'
-          ? false
-          : currentConfig.takeover === true
       clearTimeout(timer)
-      const takeoverMessage = `mindseye: takeover ${takeoverEnabled ? 'enabled' : 'disabled'}`
-      ctx.logger?.info(takeoverMessage)
-      void (async () => {
-        if (takeoverEnabled) {
-          const bridge = await runTakeover(ctx)
-          imageRefs = bridge.imageRefs
-          if (bridge.kind === 'skipped') {
-            const skippedMessage = 'mindseye: takeover skipped; paste-to-path and file-path vision remain available'
-            ctx.logger?.warn(skippedMessage)
-          }
-        }
-        finish()
-      })()
+      finish()
     })
   })
+  await Promise.all([settingsReady, takeover])
 
   registerHistorySanitizer(ctx, imageRefs)
 
@@ -207,15 +228,21 @@ export async function apply(ctx: Context, config: MindsEyeConfig = {}): Promise<
       get: (key) => cache.get(key),
       set: (key, value) => cache.set(key, value),
     },
-    runVision: async ({ dataUrl, prompt, route, signal }) => {
+    runVision: async ({ dataUrl, prompt, routes, signal }) => {
       const chain = await runProviderChain({
-        routes: [route],
+        routes,
         dataUrl,
         prompt,
         resolveApiKey,
         signal,
       })
-      return { analysis: chain.analysis, usage: chain.usage }
+      return {
+        analysis: chain.analysis,
+        usage: chain.usage,
+        provider: chain.provider,
+        model: chain.model,
+        attempts: chain.attempts.map((attempt) => ({ ...attempt, error: attempt.error ?? '' })),
+      }
     },
     runVisionBatch: async ({ images, prompt, routes, signal }) =>
       runVisionBatchChain({
@@ -233,7 +260,7 @@ export async function apply(ctx: Context, config: MindsEyeConfig = {}): Promise<
   }
 
   const readImageTool = defineTool({
-    name: config.toolName ?? 'mindseye_read_image',
+    name: 'mindseye_read_image',
     description:
       '通用看图/提取工具：查看一张或多张图片并回答相关问题，或用 intent 选择专项任务。'
       + '当前模型无法直接看图时，看图就用它；问题从用户当轮消息严格提取，禁止改写或扩写；'
@@ -268,7 +295,7 @@ export async function apply(ctx: Context, config: MindsEyeConfig = {}): Promise<
     output: VISION_OUTPUT,
     async execute(args, exec) {
       return runVisionTool({
-        name: config.toolName ?? 'mindseye_read_image',
+        name: 'mindseye_read_image',
         intent: 'visual-qa',
         routeKind: 'understand',
         batchable: true,
@@ -327,8 +354,8 @@ export async function apply(ctx: Context, config: MindsEyeConfig = {}): Promise<
   }, 'mindseye: vision tools')
 
   const imageToolDeps: CreateImageGenerationToolDeps = {
-    routes: () => currentConfig.image?.routes ?? [],
-    editsRoutes: () => currentConfig.image?.edits ?? [],
+    routes: () => currentConfig.image?.generate ?? [],
+    editsRoutes: () => currentConfig.image?.edit ?? [],
     readImage: (input: { attachmentId: string; agent?: unknown }) => readImage({ attachmentId: input.attachmentId, agent: input.agent }),
     generate: (spec, routes, signal) => runImageGenerationChain({ routes, spec, resolveApiKey, signal }),
     saveImage: saveGeneratedImage,
@@ -337,6 +364,7 @@ export async function apply(ctx: Context, config: MindsEyeConfig = {}): Promise<
       return { ...probeDimensions(bytes, format), format }
     },
     loadPrepared,
+    clearPrepared,
     onGenerated: () => {
       try {
         activateVisionTools()
@@ -349,8 +377,8 @@ export async function apply(ctx: Context, config: MindsEyeConfig = {}): Promise<
   const imageToolDisposers: Array<() => void> = []
   function syncImageTools(): void {
     for (const dispose of imageToolDisposers.splice(0)) dispose()
-    const routes = currentConfig.image?.routes ?? []
-    const edits = currentConfig.image?.edits ?? []
+    const routes = currentConfig.image?.generate ?? []
+    const edits = currentConfig.image?.edit ?? []
     if (routes.length > 0) {
       imageToolDisposers.push(ctx.tools.register(createImageGenerationTool(imageToolDeps)))
     }
@@ -386,7 +414,7 @@ export async function apply(ctx: Context, config: MindsEyeConfig = {}): Promise<
       },
       size: {
         type: 'string',
-        description: '可选，仅生图。用户有尺寸需求时填写，格式为 1K/2K/4K 或 WxH。',
+        description: '可选，仅生图。OpenAI-compatible 枚举：auto、1024x1024、1536x1024 或 1024x1536。',
       },
       sizeEvidence: {
         type: 'string',
@@ -446,7 +474,8 @@ export async function apply(ctx: Context, config: MindsEyeConfig = {}): Promise<
         exec: exec as SessionLike,
       })
       const intentId = randomUUID()
-      preparedIntents.set(intentId, { session: exec.agent?.session, prepared })
+      preparedIntents.set(intentId, { session: exec.agent?.session, prepared, lastAccessedAt: Date.now() })
+      prunePrepared()
       return {
         intentId,
         currentRequest: prepared.currentRequest,
@@ -534,9 +563,15 @@ interface VisionToolServices {
   runVision: (options: {
     dataUrl: string
     prompt: string
-    route: VisionRoute
+    routes: VisionRoute[]
     signal?: AbortSignal
-  }) => Promise<{ analysis: VisionAnalysis; usage?: TokenUsage }>
+  }) => Promise<{
+    analysis: VisionAnalysis
+    usage?: TokenUsage
+    provider?: string
+    model?: string
+    attempts?: VisionResult['meta']['attempts']
+  }>
   runVisionBatch: (options: {
     images: Array<{ id: string; dataUrl: string }>
     prompt: string
@@ -591,7 +626,30 @@ const VISION_OUTPUT = {
           provider: { type: 'string', required: true },
           model: { type: 'string', required: true },
           latencyMs: { type: 'integer', required: true },
-          attempts: { type: 'array', items: { type: 'object', additionalProperties: true }, required: true },
+          attempts: {
+            type: 'array',
+            required: true,
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                provider: { type: 'string', required: true },
+                model: { type: 'string', required: true },
+                ok: { type: 'boolean', required: true },
+                latencyMs: { type: 'integer', required: true },
+                error: { type: 'string', required: true },
+                usage: {
+                  type: 'object',
+                  additionalProperties: false,
+                  properties: {
+                    inputTokens: { type: 'integer' },
+                    outputTokens: { type: 'integer' },
+                    totalTokens: { type: 'integer' },
+                  },
+                },
+              },
+            },
+          },
           cache: { type: 'string', enum: ['hit', 'miss'], required: true },
           fallback: { type: 'string' },
           matchedEvidenceIds: { type: 'array', items: { type: 'string' } },
@@ -666,14 +724,14 @@ async function runVisionTool(
       : spec.intent
   const extract = normalizeExtractArgs(args.extract)
   const routeKind = routeKindForIntent(intent)
-  const kindRoutes = active.routes?.[routeKind]
+  const kindRoutes = active.vision?.routes?.[routeKind]
   const fallback = routeKind !== 'understand'
     && (kindRoutes === undefined || kindRoutes.length === 0)
     ? `${routeKind}-not-configured`
     : undefined
   const routes = resolveRoutes({
-    routes: active.routes ?? {},
-    fallbacks: active.fallbacks,
+    routes: active.vision?.routes ?? {},
+    fallbacks: active.vision?.fallbacks,
   }, routeKind, { model: args.model })
   if (args.intentId === undefined) {
     throw new Error(`${spec.name}: 请先调用 mindseye_plan 获取 intentId`)
@@ -744,8 +802,8 @@ async function runVisionTool(
       memory: services.memory,
       userNotice: services.userNotice(),
       cache: services.cache,
-      runVision: async ({ dataUrl, prompt, route }) =>
-        services.runVision({ dataUrl, prompt, route, signal: exec.signal }),
+      runVision: async ({ dataUrl, prompt, routes: chainRoutes }) =>
+        services.runVision({ dataUrl, prompt, routes: chainRoutes, signal: exec.signal }),
       buildPrompt: services.buildPrompt,
       toDataUrl: services.toDataUrl,
     },
@@ -760,7 +818,7 @@ function registerConfigRoute(
   ctx: Context,
   getConfig: () => MindsEyeConfig,
   isWritable: () => boolean,
-  getPersist: () => ((section: { routes: unknown; fallbacks: unknown; image: unknown }) => Promise<void>) | undefined,
+  getPersist: () => ((section: { vision: unknown; image: unknown }) => Promise<void>) | undefined,
 ): void {
   ctx.inject(['webServer'], (webCtx: any) => {
     webCtx.webServer.register({
@@ -781,12 +839,16 @@ function registerConfigRoute(
         }
         try {
           const body = await readJsonBody(req)
-          const validated = Config(body) as MindsEyeConfig
+          const validated = resolveMindsEyeConfig(Config(body) as MindsEyeConfig)
           const section = {
-            routes: validated.routes ?? {},
-            fallbacks: validated.fallbacks ?? [],
-            image: validated.image ?? { routes: [], edits: [] },
-            ...(validated.takeover === true ? { takeover: true } : {}),
+            vision: {
+              routes: validated.vision.routes,
+              fallbacks: validated.vision.fallbacks,
+            },
+            image: {
+              generate: validated.image.generate,
+              edit: validated.image.edit,
+            },
           }
           await getPersist()?.(section)
           writeJson(res, 200, {

@@ -56,9 +56,10 @@ export async function callImageGenerationProvider(
   options: ImageGenerationProviderOptions,
   fetchImpl: typeof fetch = fetch,
 ): Promise<{ images: GeneratedImage[]; usage?: TokenUsage }> {
+  const routeEndpoint = options.route.endpoint?.trim() || 'images/generations'
   const endpoint = options.route.baseUrl.replace(/\/+$/, '')
     .replace(/\/images\/generations$/i, '').replace(/\/images\/edits$/i, '')
-    + `/${options.route.endpoint ?? 'images/generations'}`
+    + `/${routeEndpoint.replace(/^\/+/, '')}`
   const bodyMode = options.route.bodyMode ?? 'json'
   const imageField = options.route.imageField ?? 'image'
   const headers: Record<string, string> = { authorization: `Bearer ${options.apiKey}` }
@@ -251,6 +252,9 @@ function isPublicAddress(address: string): boolean {
   }
   if (isIP(address) === 6) {
     const normalized = address.toLowerCase()
+    if (normalized.startsWith('::ffff:')) {
+      return isPublicAddress(normalized.slice('::ffff:'.length))
+    }
     return normalized !== '::1' && normalized !== '::' && !normalized.startsWith('fc')
       && !normalized.startsWith('fd') && !normalized.startsWith('fe8')
       && !normalized.startsWith('fe9') && !normalized.startsWith('fea')

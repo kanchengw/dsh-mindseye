@@ -11,7 +11,7 @@ import { extractStructured, parseStructuredValue } from './bridge/evidence-extra
 import { buildUserNotice } from './bridge/notice.js'
 import { evidenceContextOf, evidenceToRecord, pureEvidenceAnswer } from './memory/evidence.js'
 import { pureExtractEvidenceAnswer } from './memory/evidence.js'
-import type { SoftMemoryHit, SoftMemoryQuery, VisualEvidenceRecord } from './memory/types.js'
+import type { SoftMemoryHit, SoftMemoryQuery, VisualAnalysisRecord, VisualEvidenceRecord } from './memory/types.js'
 import type { PromptOptions } from './prompt.js'
 
 export const PROMPT_VERSION = 'mindseye-v1'
@@ -35,11 +35,18 @@ export interface CreateVisionToolDeps {
   runVision: (options: {
     dataUrl: string
     prompt: string
-    route: VisionRoute
-  }) => Promise<{ analysis: VisionResult['answer']; usage?: TokenUsage }>
+    routes: VisionRoute[]
+  }) => Promise<{
+    analysis: VisionResult['answer']
+    usage?: TokenUsage
+    provider?: string
+    model?: string
+    attempts?: VisionResult['meta']['attempts']
+  }>
   memory?: {
     getEvidence: (sha256: string) => VisualEvidenceRecord | undefined
     putEvidence: (record: VisualEvidenceRecord) => Promise<void>
+    putAnalysis?: (record: VisualAnalysisRecord) => Promise<void>
     searchSoftMemory?: (query: SoftMemoryQuery) => Promise<SoftMemoryHit[]>
   }
   userNotice?: boolean
@@ -62,6 +69,7 @@ export interface CreateBatchVisionToolDeps {
   memory?: {
     getEvidence: (sha256: string) => VisualEvidenceRecord | undefined
     putEvidence: (record: VisualEvidenceRecord) => Promise<void>
+    putAnalysis?: (record: VisualAnalysisRecord) => Promise<void>
     searchSoftMemory?: (query: SoftMemoryQuery) => Promise<SoftMemoryHit[]>
   }
   userNotice?: boolean
@@ -180,8 +188,17 @@ export async function readImageWithMindsEye(
   const vision = await deps.runVision({
     dataUrl: deps.toDataUrl(bytes, image.format),
     prompt,
-    route,
+    routes,
   })
+  const actualProvider = vision.provider ?? routeLabel(route.baseUrl)
+  const actualModel = vision.model ?? identity.model
+  const actualAttempts = vision.attempts ?? [{
+    provider: actualProvider,
+    model: actualModel,
+    ok: true,
+    latencyMs: Date.now() - started,
+    error: '',
+  }]
   const extracted = extractStructured(vision.analysis.text, intent, extract)
   if (deps.memory !== undefined && extracted !== undefined && Object.keys(extracted.evidence).length > 0) {
     const storedFields = evidenceToRecord(extracted.evidence)
@@ -193,8 +210,8 @@ export async function readImageWithMindsEye(
         height: image.height,
         format: image.format,
         ...storedFields,
-        provider: routeLabel(route.baseUrl),
-        model: identity.model,
+        provider: actualProvider,
+        model: actualModel,
         createdAt: Date.now(),
       })
     }
@@ -210,10 +227,10 @@ export async function readImageWithMindsEye(
     evidence: extracted?.evidence ?? {},
     answer,
     meta: {
-      provider: routeLabel(route.baseUrl),
-      model: identity.model,
+      provider: actualProvider,
+      model: actualModel,
       latencyMs: Date.now() - started,
-      attempts: [{ provider: routeLabel(route.baseUrl), model: identity.model, ok: true, latencyMs: Date.now() - started, error: '' }],
+      attempts: actualAttempts,
       cache: 'miss',
       ...(vision.usage === undefined ? {} : { usage: vision.usage }),
       ...(options.fallback === undefined ? {} : { fallback: options.fallback }),
@@ -225,6 +242,25 @@ export async function readImageWithMindsEye(
         ? { userNotice: buildUserNotice({ cache: 'miss', source: 'soft-memory', softMemoryHits: softHits.length }) }
         : {}),
     },
+  }
+  if (deps.memory?.putAnalysis !== undefined) {
+    const now = Date.now()
+    await deps.memory.putAnalysis({
+      id: `analysis-${now}-${Math.random().toString(36).slice(2)}`,
+      evidenceId: sha256,
+      intent,
+      normalizedQuery,
+      ...(options.region === undefined ? {} : { region: options.region }),
+      provider: actualProvider,
+      model: actualModel,
+      promptVersion: PROMPT_VERSION,
+      answerText: answer.text,
+      source: 'model-inferred',
+      createdAt: now,
+      lastAccessedAt: now,
+      accessCount: 0,
+      importance: 1,
+    })
   }
   deps.cache?.set(key, result)
   return { result, fromCache: false }
@@ -281,7 +317,7 @@ export async function readImagesWithMindsEye(
   }
 
   const cacheKey = JSON.stringify([
-    images.map((image) => image.sha256).sort(),
+    images.map((image) => image.sha256),
     normalizeQuery(options.query),
     options.intent,
     extract.join(','),
@@ -321,6 +357,7 @@ export async function readImagesWithMindsEye(
       routes,
     })
     for (const [id, text] of outcome.results) {
+      const source = outcome.sources?.get(id) ?? { provider: routeLabel(route.baseUrl), model: route.model }
       const structured = parseStructuredValue(text, options.intent, extract)
       const evidence = structured?.evidence
       resultsJson[id] = structured === undefined
@@ -340,11 +377,29 @@ export async function readImagesWithMindsEye(
             height: info?.height ?? 0,
             format: info?.format ?? 'png',
             ...storedFields,
-            provider: routeLabel(route.baseUrl),
-            model: route.model,
+            provider: source.provider,
+            model: source.model,
             createdAt: Date.now(),
           })
         }
+      }
+      if (deps.memory?.putAnalysis !== undefined) {
+        const now = Date.now()
+        await deps.memory.putAnalysis({
+          id: `analysis-${now}-${Math.random().toString(36).slice(2)}`,
+          evidenceId: id,
+          intent: options.intent,
+          normalizedQuery: normalizeQuery(options.query),
+          provider: source.provider,
+          model: source.model,
+          promptVersion: PROMPT_VERSION,
+          answerText: structured?.text ?? text,
+          source: 'model-inferred',
+          createdAt: now,
+          lastAccessedAt: now,
+          accessCount: 0,
+          importance: 1,
+        })
       }
     }
     for (const [id, message] of outcome.errors) {
@@ -352,6 +407,14 @@ export async function readImagesWithMindsEye(
     }
   }
   const structured: JsonValue = { results: resultsJson, errors: errorsJson }
+  const successfulSources = [...new Map(
+    [...(outcome?.sources?.values() ?? [])].map((source) => [`${source.provider}\u0000${source.model}`, source]),
+  ).values()]
+  const batchSource = successfulSources.length === 1
+    ? successfulSources[0]!
+    : successfulSources.length > 1
+      ? { provider: 'mixed', model: 'mixed' }
+      : { provider: routeLabel(route.baseUrl), model: route.model }
   const result: VisionResult = {
     version: 1,
     intent: options.intent,
@@ -360,8 +423,8 @@ export async function readImagesWithMindsEye(
     evidence: {},
     answer: { text: JSON.stringify(structured, null, 2), structured },
     meta: {
-      provider: routeLabel(route.baseUrl),
-      model: route.model,
+      provider: batchSource.provider,
+      model: batchSource.model,
       latencyMs: Date.now() - started,
       attempts: (outcome?.attempts ?? []) as unknown as VisionResult['meta']['attempts'],
       cache: 'miss',

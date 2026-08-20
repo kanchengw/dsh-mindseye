@@ -1,6 +1,6 @@
 {
   "name": "dsh-mindseye",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "MindsEye: model-driven vision tools, structured evidence, and exact cache for DeepSeek Harness",
   "type": "module",
   "private": false,
@@ -110,5 +110,13 @@
       ],
       "platform": "web"
     }
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kanchengw/dsh-mindseye.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kanchengw/dsh-mindseye/issues"
+  },
+  "homepage": "https://github.com/kanchengw/dsh-mindseye#readme"
 }

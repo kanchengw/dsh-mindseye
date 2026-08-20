@@ -214,8 +214,7 @@ async function runTakeoverUnlocked(
     'deepseek-official takeover failed after '
     + `${maxAttempts} attempts; restoring the stock row and continuing without the image bridge. `
     + 'Likely causes: incompatible @deepseek-ai/dsh-llm-deepseek version, corrupt llm-deepseek settings, '
-    + 'or a missing credentials service. Set MINDSEYE_MODE=passthrough (or takeover: false) and restart '
-    + 'to stay on the official adapter, then inspect the errors above.',
+    + 'or a missing credentials service. Restart to stay on the official adapter, then inspect the errors above.',
   )
   log(ctx, 'error', 'takeover failure details', lastError)
   if (official !== undefined && official.disabled === true) {

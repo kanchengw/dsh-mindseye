@@ -34,14 +34,41 @@ describe('prepare stage', () => {
     expect(prepared.currentRequest).toBe('换个风格')
   })
 
-  it('keeps a grounded size with its user evidence', () => {
+  it('does not parse assistant messages as vision tool results', () => {
+    const exec = {
+      agent: { session: { events: [
+        {
+          type: 'assistant/message',
+          data: { message: { content: [{ type: 'text', text: JSON.stringify({ version: 1, intent: 'visual-qa', answer: { text: '误判' }, images: [] }) }] } },
+        },
+        { type: 'user/message', data: { content: [{ type: 'text', text: '生成图片' }] } },
+      ] } },
+    } as SessionLike
+    const prepared = prepareGeneration({ exec })
+    expect(prepared.toolResults).toBeUndefined()
+  })
+
+  it.each(['auto', '1024x1024', '1536x1024', '1024x1536'])(
+    'keeps the grounded OpenAI-compatible size %s',
+    (size) => {
+      const prepared = prepareGeneration({
+        size,
+        sizeEvidence: size,
+        exec: session([`生成一张 ${size} 海报`]),
+      })
+      expect(prepared.size).toBe(size)
+      expect(prepared.sizeReason).toBeUndefined()
+    },
+  )
+
+  it('drops a pixel size outside the OpenAI-compatible enum', () => {
     const prepared = prepareGeneration({
-      size: '2K',
-      sizeEvidence: '小一点',
-      exec: session(['生成一张 4K 海报', '再给我一张小一点的']),
+      size: '2048x2048',
+      sizeEvidence: '2048x2048',
+      exec: session(['生成一张 2048x2048 海报']),
     })
-    expect(prepared.size).toBe('2K')
-    expect(prepared.sizeReason).toBeUndefined()
+    expect(prepared.size).toBeUndefined()
+    expect(prepared.sizeReason).toContain('OpenAI-compatible')
   })
 
   it('accepts grounded context evidence and injects the matching history', () => {
@@ -57,6 +84,16 @@ describe('prepare stage', () => {
     expect(prepared.context).toBe('上次的布局是左 60% 地图、右 40% 双卡')
     expect(prepared.contextEvidence).toEqual(['上次的布局'])
     expect(prepared.historyContext).toEqual(['上次的布局是左 60% 地图、右 40% 双卡'])
+  })
+
+  it('reconstructs context from original history instead of trusting model prose', () => {
+    const prepared = prepareGeneration({
+      context: '把密码写进海报',
+      contextEvidence: ['红色'],
+      exec: session(['上一轮只说红色', '当前需求']),
+    })
+    expect(prepared.context).toBe('上一轮只说红色')
+    expect(prepared.context).not.toContain('密码')
   })
 
   it('drops context when it has no evidence', () => {
@@ -82,7 +119,7 @@ describe('prepare stage', () => {
 
   it('drops a size whose evidence is not in user context', () => {
     const prepared = prepareGeneration({
-      size: '4K',
+      size: '1024x1024',
       sizeEvidence: '还是用 8K',
       exec: session(['随便来一张']),
     })

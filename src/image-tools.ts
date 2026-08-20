@@ -16,6 +16,7 @@ export interface CreateImageGenerationToolDeps extends ImageGenerationToolDeps {
   editsRoutes?: () => ImageGenerationRoute[]
   readImage?: (input: { attachmentId: string; agent?: unknown }) => Promise<Uint8Array>
   loadPrepared?: (intentId: string, session: unknown) => PreparedGeneration | undefined
+  clearPrepared?: (intentId: string, session: unknown) => void
   onGenerated?: () => void
 }
 
@@ -141,7 +142,7 @@ export function createImageGenerationTool(deps: CreateImageGenerationToolDeps) {
     },
     output: imageToolOutput(),
     presentResult: imageToolPresentResult,
-    presentCall: (args) => imageToolPresentCall(args, '生成图片'),
+    presentCall: (args) => imageToolPresentCall(args, IMAGE_GENERATION_TOOL_NAME),
     async execute(args, exec) {
       const intentId = (args as { intentId?: string }).intentId?.trim() ?? ''
       if (intentId === '') {
@@ -158,6 +159,7 @@ export function createImageGenerationTool(deps: CreateImageGenerationToolDeps) {
         ...(prepared.toolResults === undefined ? {} : { toolResults: prepared.toolResults }),
         ...(prepared.size === undefined ? {} : { size: prepared.size }),
       }, deps, deps.routes(), exec.signal)
+      deps.clearPrepared?.(intentId, exec.agent?.session)
       deps.onGenerated?.()
       return result as unknown as { images: JsonValue; meta: JsonValue }
     },
@@ -187,7 +189,7 @@ export function createImageEditTool(deps: CreateImageGenerationToolDeps) {
     },
     output: imageToolOutput(),
     presentResult: imageToolPresentResult,
-    presentCall: (args) => imageToolPresentCall(args, '编辑图片'),
+    presentCall: (args) => imageToolPresentCall(args, IMAGE_EDIT_TOOL_NAME),
     async execute(args, exec) {
       const intentId = (args as { intentId?: string }).intentId?.trim() ?? ''
       const attachmentId = (args as { attachmentId?: string }).attachmentId?.trim() ?? ''
@@ -195,6 +197,8 @@ export function createImageEditTool(deps: CreateImageGenerationToolDeps) {
       if (attachmentId === '') throw new Error('mindseye_edit_image: attachmentId 不能为空')
       const prepared = deps.loadPrepared?.(intentId, exec.agent?.session)
       if (prepared === undefined) throw new Error('mindseye_edit_image: intentId 无效或已失效，请重新调用 mindseye_plan')
+      const routes = deps.editsRoutes?.() ?? []
+      if (routes.length === 0) throw new Error('mindseye_edit_image: no image edit route configured')
       if (deps.readImage === undefined) throw new Error('mindseye_edit_image: readImage is not available')
       const bytes = await deps.readImage({ attachmentId, agent: exec.agent })
       const info = deps.probeImage(bytes)
@@ -205,7 +209,8 @@ export function createImageEditTool(deps: CreateImageGenerationToolDeps) {
         ...(prepared.toolResults === undefined ? {} : { toolResults: prepared.toolResults }),
         ...(prepared.size === undefined ? {} : { size: prepared.size }),
         image: { data: bytes, mediaType: `image/${info.format}` as GeneratedImageMediaType },
-      }, deps, deps.editsRoutes?.() ?? [], exec.signal)
+      }, deps, routes, exec.signal)
+      deps.clearPrepared?.(intentId, exec.agent?.session)
       deps.onGenerated?.()
       return result as unknown as { images: JsonValue; meta: JsonValue }
     },

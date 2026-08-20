@@ -125,6 +125,7 @@ export interface BatchVisionResult {
   results: Map<string, string>
   errors: Map<string, string>
   attempts: BatchVisionAttempt[]
+  sources?: Map<string, { provider: string; model: string }>
   usage?: TokenUsage
 }
 
@@ -147,6 +148,7 @@ export async function runVisionBatchChain(
   const results = new Map<string, string>()
   const errors = new Map<string, string>()
   const attempts: BatchVisionAttempt[] = []
+  const sources = new Map<string, { provider: string; model: string }>()
   let usage: TokenUsage | undefined
 
   const attempt = async (images: ProviderBatchImage[]): Promise<void> => {
@@ -174,7 +176,10 @@ export async function runVisionBatchChain(
           usage = mergeUsage(usage, outcome.usage)
         }
         const parsed = parseBatchText(outcome.analysis.text, images)
-        for (const [id, text] of parsed.results) results.set(id, text)
+        for (const [id, text] of parsed.results) {
+          results.set(id, text)
+          sources.set(id, { provider: routeLabel(route.baseUrl), model: route.model })
+        }
         for (const [id, message] of parsed.errors) errors.set(id, message)
         return
       } catch (error) {
@@ -203,7 +208,7 @@ export async function runVisionBatchChain(
   }
 
   await attempt(options.images)
-  return { results, errors, attempts, ...(usage === undefined ? {} : { usage }) }
+  return { results, errors, attempts, sources, ...(usage === undefined ? {} : { usage }) }
 }
 
 export function parseBatchText(

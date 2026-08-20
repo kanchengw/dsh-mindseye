@@ -6,18 +6,17 @@ import type { ImageGenerationRoute, RouteKind, VisionRoute } from './types.js'
 export const MINDSEYE_SETTINGS_NAMESPACE = settingsNamespace('mindseye')
 
 export interface MindsEyeConfig {
-  toolName?: string
   cacheMaxEntries?: number
-  promptVersion?: string
-  takeover?: boolean
   pasteToPath?: boolean
   maxBatch?: number
   memoryDir?: string
   memory?: boolean
   userNotice?: boolean
-  routes?: Partial<Record<RouteKind, VisionRoute[]>>
-  fallbacks?: VisionRoute[]
-  image?: { routes?: ImageGenerationRoute[]; edits?: ImageGenerationRoute[] }
+  vision?: { routes?: Partial<Record<RouteKind, VisionRoute[]>>; fallbacks?: VisionRoute[] }
+  image?: {
+    generate?: ImageGenerationRoute[]
+    edit?: ImageGenerationRoute[]
+  }
 }
 
 const routeSchema = z.object({
@@ -32,33 +31,48 @@ const imageRouteSchema = z.object({
   model: z.string(),
   baseUrl: z.string(),
   apiKeyEnv: z.string(),
+  endpoint: z.string(),
+  bodyMode: z.union(['json', 'multipart'] as const),
+  imageField: z.string(),
 })
 
 export const Config: Schema<MindsEyeConfig> = z.object({
-  toolName: z.string().default('mindseye_read_image'),
   cacheMaxEntries: z.number().step(1).min(1).max(10_000).default(500),
-  promptVersion: z.string().default('mindseye-v1'),
-  takeover: z.boolean().default(true),
   pasteToPath: z.boolean().default(true),
   maxBatch: z.number().step(1).min(1).default(5),
   memoryDir: z.string(),
   memory: z.boolean().default(true),
   userNotice: z.boolean().default(true),
-  routes: z.dict(z.array(routeSchema)).default({}),
-  fallbacks: z.array(routeSchema).default([]),
+  vision: z.object({
+    routes: z.dict(z.array(routeSchema)).default({}),
+    fallbacks: z.array(routeSchema).default([]),
+  }).default({ routes: {}, fallbacks: [] }),
   image: z.object({
-    routes: z.array(imageRouteSchema).default([]),
-    edits: z.array(imageRouteSchema).default([]),
-}).default({ routes: [], edits: [] }),
+    generate: z.array(imageRouteSchema).default([]),
+    edit: z.array(imageRouteSchema).default([]),
+  }).default({ generate: [], edit: [] }),
 })
 
 export function resolveMindsEyeConfig(
   config: MindsEyeConfig | undefined,
-): Required<Pick<MindsEyeConfig, 'routes' | 'fallbacks' | 'image'>> & MindsEyeConfig {
+): MindsEyeConfig & {
+  vision: { routes: Partial<Record<RouteKind, VisionRoute[]>>; fallbacks: VisionRoute[] }
+  image: { generate: ImageGenerationRoute[]; edit: ImageGenerationRoute[] }
+} {
   return {
-    ...config,
-    routes: config?.routes ?? {},
-    fallbacks: config?.fallbacks ?? [],
-    image: config?.image ?? { routes: [] },
+    ...(config?.cacheMaxEntries === undefined ? {} : { cacheMaxEntries: config.cacheMaxEntries }),
+    ...(config?.pasteToPath === undefined ? {} : { pasteToPath: config.pasteToPath }),
+    ...(config?.maxBatch === undefined ? {} : { maxBatch: config.maxBatch }),
+    ...(config?.memoryDir === undefined ? {} : { memoryDir: config.memoryDir }),
+    ...(config?.memory === undefined ? {} : { memory: config.memory }),
+    ...(config?.userNotice === undefined ? {} : { userNotice: config.userNotice }),
+    vision: {
+      routes: config?.vision?.routes ?? {},
+      fallbacks: config?.vision?.fallbacks ?? [],
+    },
+    image: {
+      generate: config?.image?.generate ?? [],
+      edit: config?.image?.edit ?? [],
+    },
   }
 }

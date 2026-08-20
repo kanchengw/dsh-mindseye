@@ -1,8 +1,8 @@
 export const OVERRIDE_KINDS = ['extract', 'locate']
 
 export const OVERRIDE_LABELS = {
-  extract: '文字提取路由（OCR）',
-  locate: '空间定位（mindseye_ground）',
+  extract: 'OCR / 结构化提取',
+  locate: '空间定位',
 }
 
 export function emptyRoute() {
@@ -20,6 +20,9 @@ export function emptyImageRoute() {
     model: '',
     baseUrl: '',
     apiKeyEnv: '',
+    endpoint: '',
+    bodyMode: 'json',
+    imageField: 'image',
   }
 }
 
@@ -46,22 +49,26 @@ function configImageRouteToDraft(route) {
     model: typeof route.model === 'string' ? route.model : '',
     baseUrl: typeof route.baseUrl === 'string' ? route.baseUrl : '',
     apiKeyEnv: typeof route.apiKeyEnv === 'string' ? route.apiKeyEnv : '',
+    endpoint: typeof route.endpoint === 'string' ? route.endpoint : '',
+    bodyMode: route.bodyMode === 'multipart' ? 'multipart' : 'json',
+    imageField: typeof route.imageField === 'string' ? route.imageField : 'image',
   }
 }
 
 export function decodeSettings(section) {
   const value = section && typeof section === 'object' ? section : {}
-  const fallbacks = Array.isArray(value.fallbacks) ? value.fallbacks : []
-  const routes = value.routes && typeof value.routes === 'object' ? value.routes : {}
-  const imageRoutes = value.image && typeof value.image === 'object' && Array.isArray(value.image.routes)
-    ? value.image.routes
+  const vision = value.vision && typeof value.vision === 'object' ? value.vision : {}
+  const fallbacks = Array.isArray(vision.fallbacks) ? vision.fallbacks : []
+  const routes = vision.routes && typeof vision.routes === 'object' ? vision.routes : {}
+  const imageRoutes = value.image && typeof value.image === 'object' && Array.isArray(value.image.generate)
+    ? value.image.generate
     : []
-  const imageEditsRoutes = value.image && typeof value.image === 'object' && Array.isArray(value.image.edits)
-    ? value.image.edits
+  const imageEditsRoutes = value.image && typeof value.image === 'object' && Array.isArray(value.image.edit)
+    ? value.image.edit
     : []
   const understandRoute = Array.isArray(routes.understand)
     ? routes.understand[0]
-    : fallbacks[0]
+    : undefined
   const overrides = {}
   for (const kind of OVERRIDE_KINDS) {
     const first = Array.isArray(routes[kind]) ? routes[kind][0] : undefined
@@ -72,7 +79,9 @@ export function decodeSettings(section) {
     overrides,
     imagePrimary: configImageRouteToDraft(imageRoutes[0]),
     imageEdits: configImageRouteToDraft(imageEditsRoutes[0]),
-    takeover: value.takeover === true,
+    visionFallbacks: fallbacks,
+    imageGenerateRest: imageRoutes.slice(1),
+    imageEditRest: imageEditsRoutes.slice(1),
   }
 }
 
@@ -170,6 +179,9 @@ export function imageRouteToConfig(route) {
     model: trimmed(route.model),
     baseUrl: trimmed(route.baseUrl).replace(/\/+$/, ''),
     apiKeyEnv: trimmed(route.apiKeyEnv),
+    ...(trimmed(route.endpoint) === '' ? {} : { endpoint: trimmed(route.endpoint) }),
+    ...(route.bodyMode === 'multipart' ? { bodyMode: 'multipart' } : {}),
+    ...(trimmed(route.imageField) === '' || trimmed(route.imageField) === 'image' ? {} : { imageField: trimmed(route.imageField) }),
   }
 }
 
@@ -193,13 +205,11 @@ export function encodeSettings(draft) {
     ? [imageRouteToConfig(draft.imageEdits)]
     : []
   return {
-    routes,
-    fallbacks: [],
+    vision: { routes, fallbacks: Array.isArray(draft.visionFallbacks) ? draft.visionFallbacks : [] },
     image: {
-      routes: imageRoutes,
-      edits: imageEditsRoutes,
+      generate: [...imageRoutes, ...(Array.isArray(draft.imageGenerateRest) ? draft.imageGenerateRest : [])],
+      edit: [...imageEditsRoutes, ...(Array.isArray(draft.imageEditRest) ? draft.imageEditRest : [])],
     },
-    ...(draft.takeover === true ? { takeover: true } : {}),
   }
 }
 

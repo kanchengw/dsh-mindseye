@@ -16,7 +16,8 @@ export function extractStructured(
   if (parsed === undefined) return undefined
   if (extract !== undefined && extract.length > 0) {
     if (typeof parsed.answer !== 'string') return undefined
-    return { answer: parsed.answer, evidence: normalizeEvidence(parsed.evidence) }
+    const evidence = normalizeEvidenceStrict(parsed.evidence, extract)
+    return evidence === undefined ? undefined : { answer: parsed.answer, evidence }
   }
   if (!structuredEvidenceIntent(intent)) return undefined
   if (intent === 'ocr') {
@@ -36,7 +37,8 @@ export function parseStructuredValue(
   if (parsed === undefined) return undefined
   if (extract !== undefined && extract.length > 0) {
     if (typeof parsed.text !== 'string') return undefined
-    return { text: parsed.text, evidence: normalizeEvidence(parsed.evidence) }
+    const evidence = normalizeEvidenceStrict(parsed.evidence, extract)
+    return evidence === undefined ? undefined : { text: parsed.text, evidence }
   }
   if (intent === 'ocr') {
     const normalized = normalizeOcrAnswer(parsed)
@@ -138,6 +140,41 @@ export function normalizeEvidence(raw: unknown): VisualEvidence {
       }))
   }
   return evidence
+}
+
+function normalizeEvidenceStrict(raw: unknown, requested: EvidenceKind[]): VisualEvidence | undefined {
+  if (!isRecord(raw)) return undefined
+  const source = raw as Record<string, unknown>
+  if (requested.includes('ocr')) {
+    const ocr = source.ocr
+    if (!isRecord(ocr) || typeof ocr.fullText !== 'string' || ocr.fullText.trim() === '') return undefined
+  }
+  if (requested.includes('layout')) {
+    if (!Array.isArray(source.layout) || source.layout.length === 0) return undefined
+    if (source.layout.some((item) => !isRecord(item) || typeof item.region !== 'string' || item.region.trim() === '' || typeof item.content !== 'string' || item.content.trim() === '')) return undefined
+  }
+  if (requested.includes('colors')) {
+    if (!Array.isArray(source.colors) || source.colors.length === 0) return undefined
+    if (source.colors.some((item) => !isRecord(item) || typeof item.hex !== 'string' || !/^#[0-9a-f]{6}$/i.test(item.hex) || (item.share !== undefined && (typeof item.share !== 'number' || item.share < 0 || item.share > 1)))) return undefined
+  }
+  const evidence = normalizeEvidence(raw)
+  for (const kind of requested) {
+    if (kind === 'ocr' && evidence.ocr === undefined) return undefined
+    if (kind === 'layout' && evidence.layout === undefined) return undefined
+    if (kind === 'colors' && evidence.colors === undefined) return undefined
+  }
+  const layout = evidence.layout as Array<{ region: string; content: string }> | undefined
+  const colors = evidence.colors as Array<{ hex: string; share?: number }> | undefined
+  const elements = evidence.elements as Array<{ type: string; box?: { x1: number; y1: number; x2: number; y2: number } }> | undefined
+  if (layout?.some((item) => item.region === '' || item.content === '')) return undefined
+  if (colors?.some((item) => !/^#[0-9a-f]{6}$/i.test(item.hex) || (item.share !== undefined && (item.share < 0 || item.share > 1)))) return undefined
+  if (elements?.some((item) => item.type === '' || (item.box !== undefined && !validBox(item.box)))) return undefined
+  return evidence
+}
+
+function validBox(box: { x1: number; y1: number; x2: number; y2: number }): boolean {
+  return [box.x1, box.y1, box.x2, box.y2].every(Number.isFinite)
+    && box.x1 <= box.x2 && box.y1 <= box.y2
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

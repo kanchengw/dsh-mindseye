@@ -1,6 +1,6 @@
 export const CONTEXT_MAX_LENGTH = 800
 export const HISTORY_WINDOW = 5
-export const GENERATION_SIZE_PATTERN = /^(?:1K|2K|4K|\d{2,5}x\d{2,5})$/i
+export const GENERATION_SIZE_PATTERN = /^(?:auto|1024x1024|1536x1024|1024x1536)$/i
 
 export interface SessionLike {
   agent?: {
@@ -49,7 +49,7 @@ function historyEntries(exec: SessionLike | undefined): HistoryEntry[] {
       if (entry !== undefined) entries.push(entry)
       continue
     }
-    if (event.type === 'assistant/message' || event.type === 'tool/result') {
+    if (event.type === 'tool/result') {
       const entry = toolResultEntry(contentBlocksOf(event.data?.message))
       if (entry !== undefined) entries.push(entry)
     }
@@ -185,7 +185,16 @@ export function normalizeContext(
   if (grounded.length === 0) {
     return { reason: 'contextEvidence 未在历史上下文、附件 id 或生成记录中找到，已忽略' }
   }
-  return { value: text, evidence: grounded }
+  const reconstructed = previousTexts.filter((message) =>
+    grounded.some((entry) => message.includes(entry)))
+  const attachmentContext = grounded
+    .filter((entry) => attachmentIds.includes(entry))
+    .map((entry) => `[附件 ${entry}]`)
+  const trustedContext = [...new Set([...reconstructed, ...attachmentContext])].join('\n').trim()
+  return {
+    ...(trustedContext === '' ? {} : { value: trustedContext }),
+    evidence: grounded,
+  }
 }
 
 function selectHistory(
@@ -230,11 +239,11 @@ export function normalizeGenerationSize(
   const quote = evidence?.trim() ?? ''
   if (quote === '') return { reason: 'size 缺少 sizeEvidence' }
   if (!GENERATION_SIZE_PATTERN.test(raw)) {
-    return { reason: 'size 不是生图端口支持的格式（1K/2K/4K 或 WxH）' }
+    return { reason: 'size 不是 OpenAI-compatible 格式枚举（auto、1024x1024、1536x1024 或 1024x1536）' }
   }
   const grounded = userTexts.some((text) => text.includes(quote))
   if (!grounded) return { reason: 'sizeEvidence 未出现在用户上下文中' }
-  return { size: raw }
+  return { size: raw.toLowerCase() }
 }
 
 export function prepareVision(

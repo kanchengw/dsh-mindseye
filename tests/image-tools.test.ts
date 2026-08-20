@@ -207,6 +207,22 @@ describe('image generation tool', () => {
 })
 
 describe('image edit tool', () => {
+  it('checks edit routes before reading the reference image', async () => {
+    const readImage = vi.fn()
+    const tool = createImageEditTool({
+      routes: () => [route],
+      editsRoutes: () => [],
+      generate: vi.fn(),
+      readImage,
+      probeImage: () => ({ width: 1, height: 1, format: 'png' }),
+      saveImage: vi.fn(),
+      loadPrepared: () => ({ currentRequest: '改成浅色' }),
+    })
+    await expect(tool.execute({ intentId: 'edit-1', attachmentId: 'sha256:abc' }, {} as never))
+      .rejects.toThrow('no image edit route configured')
+    expect(readImage).not.toHaveBeenCalled()
+  })
+
   it('loads the reference image and routes through editsRoutes', async () => {
     const editRoute = { ...route, model: 'edit-model' }
     const generate = vi.fn(async () => ({
@@ -216,6 +232,7 @@ describe('image edit tool', () => {
       attempts: [],
     }))
     const onGenerated = vi.fn()
+    const clearPrepared = vi.fn()
     const tool = createImageEditTool({
       routes: () => [route],
       editsRoutes: () => [editRoute],
@@ -230,6 +247,7 @@ describe('image edit tool', () => {
         height: 1,
       } as ImageAttachmentRef),
       loadPrepared: () => ({ currentRequest: '改成浅色' }),
+      clearPrepared,
       onGenerated,
     })
     const exec = { agent: { session: {} }, signal: new AbortController().signal }
@@ -243,6 +261,7 @@ describe('image edit tool', () => {
       exec.signal,
     )
     expect(onGenerated).toHaveBeenCalledOnce()
+    expect(clearPrepared).toHaveBeenCalledWith('edit-1', exec.agent.session)
   })
 })
 

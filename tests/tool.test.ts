@@ -120,6 +120,52 @@ describe('readImageWithMindsEye', () => {
     expect(seenRegion).toBe('1,2,3,4')
   })
 
+  it('passes the complete route chain to single-image vision', async () => {
+    let seenModels: string[] = []
+    const deps = {
+      readImage: async () => new TextEncoder().encode('image-bytes'),
+      probeImage: async () => ({ width: 10, height: 20, format: 'png' }),
+      runVision: async ({ routes }: { routes: Array<{ model: string }> }) => {
+        seenModels = routes.map((item) => item.model)
+        return { analysis: { text: 'answer' } }
+      },
+      buildPrompt,
+      toDataUrl: (bytes: Uint8Array, format: string) => `data:image/${format};base64,${Buffer.from(bytes).toString('base64')}`,
+    }
+    await readImageWithMindsEye({ path: '/a.png' }, deps, [
+      { model: 'primary', baseUrl: 'https://p/v1', apiKeyEnv: 'K' },
+      { model: 'fallback', baseUrl: 'https://q/v1', apiKeyEnv: 'K2' },
+    ])
+    expect(seenModels).toEqual(['primary', 'fallback'])
+  })
+
+  it('records the provider and attempts from the route that actually succeeded', async () => {
+    const putAnalysis = vi.fn()
+    const deps = {
+      readImage: async () => new TextEncoder().encode('image-bytes'),
+      probeImage: async () => ({ width: 10, height: 20, format: 'png' }),
+      memory: { getEvidence: () => undefined, putEvidence: vi.fn(), putAnalysis },
+      runVision: async () => ({
+        analysis: { text: 'fallback answer' },
+        provider: 'q',
+        model: 'fallback',
+        attempts: [
+          { provider: 'p', model: 'primary', ok: false, latencyMs: 2, error: 'quota' },
+          { provider: 'q', model: 'fallback', ok: true, latencyMs: 3, error: '' },
+        ],
+      }),
+      buildPrompt,
+      toDataUrl: (bytes: Uint8Array, format: string) => `data:image/${format};base64,${Buffer.from(bytes).toString('base64')}`,
+    }
+    const result = await readImageWithMindsEye({ path: '/a.png' }, deps, [
+      { model: 'primary', baseUrl: 'https://p/v1', apiKeyEnv: 'K' },
+      { model: 'fallback', baseUrl: 'https://q/v1', apiKeyEnv: 'K2' },
+    ])
+    expect(result.result.meta).toMatchObject({ provider: 'q', model: 'fallback' })
+    expect(result.result.meta.attempts).toHaveLength(2)
+    expect(putAnalysis).toHaveBeenCalledWith(expect.objectContaining({ provider: 'q', model: 'fallback' }))
+  })
+
   it('requests and parses combined evidence in one call', async () => {
     let seenExtract: unknown
     const deps = {
@@ -246,6 +292,31 @@ describe('readImageWithMindsEye', () => {
     expect(first.meta.cache).toBe('miss')
     expect(second.meta.cache).toBe('hit')
     expect(runVisionBatch).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not reuse a batch cache entry when image order changes', async () => {
+    const cache = new ExactVisionCache(10, Number.POSITIVE_INFINITY)
+    const runVisionBatch = vi.fn(async ({ images }: { images: Array<{ id: string }> }) => ({
+      results: new Map(images.map((image) => [image.id, image.id])),
+      errors: new Map(),
+      attempts: [{ provider: 'p', model: 'm', ok: true, latencyMs: 1, images: images.length }],
+    }))
+    const deps = {
+      readImage: async ({ attachmentId }: { attachmentId?: string }) => new TextEncoder().encode(attachmentId ?? ''),
+      probeImage: async () => ({ width: 10, height: 20, format: 'png' }),
+      cache: {
+        get: (key: string) => cache.get(key),
+        set: (key: string, value: VisionResult) => cache.set(key, value),
+      },
+      runVisionBatch,
+      buildBatchPrompt: () => 'batch prompt',
+      toDataUrl: (bytes: Uint8Array, format: string) => `data:image/${format};base64,${Buffer.from(bytes).toString('base64')}`,
+    }
+    const routes = [{ model: 'm', baseUrl: 'https://p/v1', apiKeyEnv: 'K' }]
+    await readImagesWithMindsEye({ attachmentIds: ['a', 'b'], intent: 'pixel-diff' }, deps, routes)
+    const reversed = await readImagesWithMindsEye({ attachmentIds: ['b', 'a'], intent: 'pixel-diff' }, deps, routes)
+    expect(reversed.meta.cache).toBe('miss')
+    expect(runVisionBatch).toHaveBeenCalledTimes(2)
   })
 
   it('serves pure extraction intents from stored evidence without calling the model', async () => {

@@ -45,6 +45,20 @@ describe('callImageGenerationProvider', () => {
     })
   })
 
+  it('uses the OpenAI generations endpoint when endpoint is empty', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      data: [{ b64_json: pngBase64 }],
+    }))
+
+    await callImageGenerationProvider({
+      route: { ...route, endpoint: '' },
+      apiKey: 'secret',
+      spec: { prompt: 'a precise image', requestVersion: 'v1' },
+    }, fetchMock as unknown as typeof fetch)
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://images.example/v1/images/generations')
+  })
+
   it('downloads an HTTPS URL response after validating the image bytes', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ data: [{ url: 'https://cdn.example/image.png' }] }))
@@ -90,6 +104,18 @@ describe('callImageGenerationProvider', () => {
     }, fetchMock as unknown as typeof fetch)).rejects.toMatchObject({ kind: 'invalid-input' })
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects IPv4-mapped IPv6 loopback image URLs', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      data: [{ url: 'https://cdn.example/image.png' }],
+    }))
+    await expect(callImageGenerationProvider({
+      route,
+      apiKey: 'secret',
+      spec: { prompt: 'a precise image', requestVersion: 'v1' },
+      resolveHost: async () => [{ address: '::ffff:127.0.0.1' }],
+    }, fetchMock as unknown as typeof fetch)).rejects.toMatchObject({ kind: 'invalid-input' })
   })
 
   it('rejects oversized base64 image responses before saving an attachment', async () => {

@@ -108,4 +108,15 @@ describe('extractStructured with extract', () => {
   it('rejects a combined envelope without an answer', () => {
     expect(extractStructured(JSON.stringify({ evidence: { ocr: { fullText: 'x' } } }), 'visual-qa', ['ocr'])).toBeUndefined()
   })
+
+  it('rejects requested evidence when a field is missing or malformed', () => {
+    expect(extractStructured(JSON.stringify({
+      answer: 'ok',
+      evidence: { colors: [{ hex: 'red' }] },
+    }), 'visual-qa', ['ocr', 'colors'])).toBeUndefined()
+    expect(extractStructured(JSON.stringify({
+      answer: 'ok',
+      evidence: { colors: [{ hex: '#ff0000', share: 2 }] },
+    }), 'visual-qa', ['colors'])).toBeUndefined()
+  })
 })

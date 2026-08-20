@@ -123,7 +123,7 @@ export type ProviderAttempt = {
   latencyMs: number
   error: string
   usage?: TokenUsage
-} & Record<string, JsonValue>
+}
 
 export interface VisionAnalysis {
   text: string
@@ -174,7 +174,13 @@ export interface ResolvedVisionDeps {
   runVision: (options: {
     dataUrl: string
     prompt: string
-    route: VisionRoute
+    routes: VisionRoute[]
     signal?: AbortSignal
-  }) => Promise<{ analysis: VisionAnalysis; usage?: TokenUsage }>
+  }) => Promise<{
+    analysis: VisionAnalysis
+    usage?: TokenUsage
+    provider?: string
+    model?: string
+    attempts?: ProviderAttempt[]
+  }>
 }
