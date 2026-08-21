@@ -14,12 +14,12 @@ MindsEye is a vision plugin for DeepSeek Harness (dsh). Pasted images stay visib
 
 ## Core Experience
 
-- **Paste and see**: automatically attempts the `deepseek-official` bridge so images enter the conversation natively; when unavailable it falls back to path-based paste, so new images always get through
+- **Paste and see**: images enter the dsh conversation as native attachments; native multimodal DeepSeek models receive them unchanged, while text-only DeepSeek models keep the same selector entry and use the MindsEye adapter bridge
 - **Model picks the intent, plugin routes the model**: `mindseye_read_image` takes an `intent` (visual-qa / ocr / layout / chart / color / pixel-diff / general) plus optional `extract` for combined structured evidence in one call; `mindseye_ground` stays separate for coordinates
 - **Generated images appear in the conversation**: `mindseye_generate_image` delegates to a dedicated image generation model and returns the result as a dsh attachment, without auto-saving to the project or running automatic verification
 - **Automatic mounting on image turns**: vision tools are registered when an image message arrives; text-only turns keep only one activation entry so tools do not occupy model context permanently
 - **Batch reads in one call**: multiple images are read together, with exponential split fallback on batch 4xx so a failure affects only the failed image
-- **Old sessions stay clean**: image-bearing history remains usable in fallback mode, with image blocks rewritten into attachment markers
+- **Route-safe history**: multimodal routes keep image blocks intact; text-only requests receive attachment markers without mutating the durable session surface
 - **Every call is transparent**: provider, model, latency, token usage, and fallback markers are returned for auditability
 
 ![Interaction](assets/ScreenShot_interaction.png)
@@ -28,8 +28,8 @@ MindsEye is a vision plugin for DeepSeek Harness (dsh). Pasted images stay visib
 
 ### Image Input
 
-- Native paste/drag (automatic bridge, no duplicate model selector entry)
-- `paste-to-path` fallback: pasted images are converted to path text in text-only model scenarios
+- Native paste/drag through dsh without duplicate provider or model entries
+- `paste-to-path` fallback only when the adapter bridge is unavailable and the selected model is confirmed text-only
 - `mindseye_read_image` general vision, supporting local paths, single attachment ids, and batch attachment ids
 
 ### Tools and Routing
@@ -67,7 +67,7 @@ MindsEye is a vision plugin for DeepSeek Harness (dsh). Pasted images stay visib
 ### Data Handling and Security
 
 - **Native attachments first**: image-capable models keep native dsh attachments; MindsEye associates images by attachment id and does not ask the user to choose local files manually
-- **Automatic temporary path fallback**: when the current model is confirmed text-only and `paste-to-path` is enabled, freshly pasted PNG, JPEG, WebP, or GIF files (up to 25 MiB each) are validated, stored in an isolated system temp directory, and returned as a path. Temp files use `0600` mode
+- **Automatic temporary path fallback**: if the adapter bridge is unavailable and the current model is confirmed text-only, freshly pasted or dropped PNG, JPEG, WebP, or GIF files (up to 25 MiB each) are validated, stored in an isolated system temp directory, and returned as paths. Temp files use `0600` mode
 - **External vision calls**: image bytes and question text are sent only to the vision provider's Base URL when a MindsEye tool executes; configure only services you trust
 - **Credentials and cache**: API keys resolve from environment variables, dsh Credentials, or plugin settings and are sent as Bearer auth to the matching provider only. The exact cache lives only in the current dsh process memory (max 500 entries), is never persisted, and clears on process exit
 - **Execution boundary**: the plugin never starts shells, child processes, or executes downloaded code. The normal web paste fallback only reads the temporary image just created by the plugin; tools also accept dsh attachment ids
@@ -76,7 +76,7 @@ MindsEye is a vision plugin for DeepSeek Harness (dsh). Pasted images stay visib
 
 - `understand / extract / locate` routes can be added as needed; unset routes fall back to the default model
 - Base URL, API key (masked with eye toggle), model id, protocol (explicit), and common Max Tokens values
-- Model takeover is always attempted at startup; a failed attempt restores the official adapter and continues in path-paste mode
+- The DeepSeek bridge decorates the existing `deepseek-official` route in place: the selector keeps one provider and one copy of each model, native image models pass through unchanged, and text-only requests are sanitized only at the adapter boundary
 
 ## Installation
 
@@ -84,7 +84,7 @@ MindsEye is a vision plugin for DeepSeek Harness (dsh). Pasted images stay visib
 npx @deepseek-ai/dsh plugin --profile web add dsh-mindseye
 ```
 
-Restart dsh web to paste images natively. Takeover is automatic and is not exposed as a user setting.
+Restart dsh web after installation. The adapter bridge is automatic and has no user-facing switch; a failed bridge restores the official adapter and enables the path fallback.
 
 On first use, configure one general vision model (Base URL, API key, model id) in the MindsEye settings card; unconfigured OCR / locate routes fall back to the general model automatically.
 

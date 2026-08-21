@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { readFile, rm } from 'node:fs/promises'
 import { basename, dirname } from 'node:path'
 import { Readable } from 'node:stream'
-import { computePasteVerdict, registerPasteRoute, sniffImageExt } from '../src/bridge/paste.js'
+import sharp from 'sharp'
+import { registerPasteRoute, shouldConvertImageToPath, sniffImageExt } from '../src/bridge/paste.js'
 
 describe('sniffImageExt', () => {
   it('recognizes png, jpeg, webp, and gif', () => {
@@ -17,12 +18,12 @@ describe('sniffImageExt', () => {
   })
 })
 
-describe('computePasteVerdict', () => {
+describe('shouldConvertImageToPath', () => {
   function contextWithLlm(llm: unknown) {
     return { get: (name: string) => (name === 'llm' ? llm : undefined) }
   }
 
-  it('takes over when every matched model is text-only', async () => {
+  it('converts to a path when every matched model is text-only', async () => {
     const llm = {
       listProviders: () => [{ id: 'deepseek-official' }],
       listModels: async () => [{
@@ -31,7 +32,7 @@ describe('computePasteVerdict', () => {
         inputModalities: ['text'],
       }],
     }
-    await expect(computePasteVerdict(contextWithLlm(llm) as never, '当前模型 DeepSeek-V4-Flash'))
+    await expect(shouldConvertImageToPath(contextWithLlm(llm) as never, '当前模型 DeepSeek-V4-Flash'))
       .resolves.toBe(true)
   })
 
@@ -44,7 +45,7 @@ describe('computePasteVerdict', () => {
         inputModalities: ['text', 'image'],
       }],
     }
-    await expect(computePasteVerdict(contextWithLlm(llm) as never, '当前模型 Qwen VL'))
+    await expect(shouldConvertImageToPath(contextWithLlm(llm) as never, '当前模型 Qwen VL'))
       .resolves.toBe(false)
   })
 
@@ -57,7 +58,7 @@ describe('computePasteVerdict', () => {
         inputModalities: ['text'],
       }],
     }
-    await expect(computePasteVerdict(contextWithLlm(llm) as never, 'unknown'))
+    await expect(shouldConvertImageToPath(contextWithLlm(llm) as never, 'unknown'))
       .resolves.toBe(false)
   })
 })
@@ -96,5 +97,120 @@ describe('registerPasteRoute', () => {
     } finally {
       await rm(dirname(path), { recursive: true, force: true })
     }
+  })
+
+  it('returns the path-fallback decision contract', async () => {
+    let handler: ((req: any, res: any) => Promise<void>) | undefined
+    const ctx = {
+      get: (name: string) => name === 'llm'
+        ? {
+            listProviders: () => [{ id: 'deepseek-official' }],
+            listModels: async () => [{
+              id: 'deepseek-v4-flash',
+              inputModalities: ['text'],
+            }],
+          }
+        : undefined,
+      inject: (_services: string[], callback: (webCtx: any) => void) => callback({
+        webServer: {
+          register: (route: { handler: (req: any, res: any) => Promise<void> }) => {
+            handler = route.handler
+          },
+        },
+      }),
+    }
+    registerPasteRoute(ctx as never, { enabled: () => true })
+    const request = { method: 'GET', url: '/_dsh/mindseye/paste?model=deepseek-v4-flash' }
+    let body = ''
+    await handler?.(request, {
+      writeHead: () => undefined,
+      end: (value: string) => { body = value },
+    })
+
+    expect(JSON.parse(body)).toEqual({ ok: true, value: { convertToPath: true } })
+  })
+
+  it('returns a DSH-compatible image for native paste and drop replay', async () => {
+    let handler: ((req: any, res: any) => Promise<void>) | undefined
+    const ctx = {
+      inject: (_services: string[], callback: (webCtx: any) => void) => callback({
+        webServer: {
+          register: (route: { handler: (req: any, res: any) => Promise<void> }) => {
+            handler = route.handler
+          },
+        },
+      }),
+    }
+    registerPasteRoute(ctx as never, { enabled: () => true })
+    const source = await sharp({
+      create: {
+        width: 2048,
+        height: 1024,
+        channels: 3,
+        background: '#336699',
+      },
+    }).jpeg().toBuffer()
+    const request = Object.assign(Readable.from([source]), {
+      method: 'POST',
+      url: '/_dsh/mindseye/paste?mode=adapt',
+    })
+    let status = 0
+    let headers: Record<string, string> = {}
+    let body = Buffer.alloc(0)
+
+    await handler?.(request, {
+      writeHead: (value: number, valueHeaders: Record<string, string>) => {
+        status = value
+        headers = valueHeaders
+      },
+      end: (value: Uint8Array) => { body = Buffer.from(value) },
+    })
+
+    expect(status).toBe(200)
+    expect(headers['content-type']).toBe('image/jpeg')
+    expect(headers['x-mindseye-image-adapted']).toBe('true')
+    await expect(sharp(body).metadata()).resolves.toEqual(expect.objectContaining({
+      width: 1980,
+      height: 990,
+      format: 'jpeg',
+    }))
+  })
+
+  it('returns compliant native image bytes without re-encoding them', async () => {
+    let handler: ((req: any, res: any) => Promise<void>) | undefined
+    const ctx = {
+      inject: (_services: string[], callback: (webCtx: any) => void) => callback({
+        webServer: {
+          register: (route: { handler: (req: any, res: any) => Promise<void> }) => {
+            handler = route.handler
+          },
+        },
+      }),
+    }
+    registerPasteRoute(ctx as never, { enabled: () => true })
+    const source = await sharp({
+      create: {
+        width: 2000,
+        height: 1000,
+        channels: 4,
+        background: '#336699',
+      },
+    }).png().toBuffer()
+    const request = Object.assign(Readable.from([source]), {
+      method: 'POST',
+      url: '/_dsh/mindseye/paste?mode=adapt',
+    })
+    let headers: Record<string, string> = {}
+    let body = Buffer.alloc(0)
+
+    await handler?.(request, {
+      writeHead: (_status: number, valueHeaders: Record<string, string>) => {
+        headers = valueHeaders
+      },
+      end: (value: Uint8Array) => { body = Buffer.from(value) },
+    })
+
+    expect(headers['x-mindseye-image-adapted']).toBe('false')
+    expect(body).toEqual(source)
   })
 })

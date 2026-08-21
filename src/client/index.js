@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { IconChevronDownOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { GeneratedImagePreview } from './generated-image-preview.js'
 import {
   OVERRIDE_KINDS,
   OVERRIDE_LABELS,
@@ -14,6 +15,12 @@ import {
   routeValidationError,
   updateRoute,
 } from './settings.js'
+import {
+  consumeReplayedImageInput,
+  filesFromTransfer,
+  replayImageInput,
+  transferHasImage,
+} from './paste-fallback.js'
 import { CSS, STYLE_ID } from './styles.js'
 
 const CONFIG_ROUTE = '/_dsh/mindseye/config'
@@ -23,20 +30,7 @@ const PASTE_VERDICT_TTL_MS = 60000
 const MAX_TOKEN_VALUES = [512, 1024, 2048, 4096, 8192, 16384]
 
 let pasteRouteAvailable = true
-const pasteVerdicts = {}
-
-function pasteImageFiles(event) {
-  const items = event.clipboardData?.items
-  if (!items) return []
-  const files = []
-  for (let i = 0; i < items.length; i += 1) {
-    const item = items[i]
-    if (item.kind !== 'file') continue
-    const file = item.getAsFile()
-    if (file && /^image\//.test(file.type)) files.push(file)
-  }
-  return files
-}
+const pathFallbackDecisions = {}
 
 function currentModelLabel() {
   const buttons = document.querySelectorAll('button[aria-label]')
@@ -48,9 +42,10 @@ function currentModelLabel() {
 }
 
 function insertText(target, text) {
-  const el = target && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT')
-    ? target
-    : document.activeElement
+  const direct = target && typeof target.closest === 'function'
+    ? target.closest('textarea,input')
+    : undefined
+  const el = direct || document.activeElement
   if (!el || (el.tagName !== 'TEXTAREA' && el.tagName !== 'INPUT')) return
   el.focus()
   let inserted = false
@@ -69,16 +64,17 @@ function insertText(target, text) {
   }
 }
 
-function refreshPasteVerdict(label) {
+function refreshPathFallbackDecision(label) {
   if (!pasteRouteAvailable || label === '') return
-  const cached = pasteVerdicts[label]
+  const cached = pathFallbackDecisions[label]
+  if (cached?.pending === true) return
   if (cached !== undefined && Date.now() - cached.at < PASTE_VERDICT_TTL_MS) return
   const entry = {
     pending: true,
-    takeover: cached ? cached.takeover : false,
+    convertToPath: cached ? cached.convertToPath : false,
     at: cached ? cached.at : 0,
   }
-  pasteVerdicts[label] = entry
+  pathFallbackDecisions[label] = entry
   fetch(`${PASTE_ROUTE}?model=${encodeURIComponent(label)}`)
     .then((res) => {
       if (res.status === 404) {
@@ -92,7 +88,7 @@ function refreshPasteVerdict(label) {
     .then((body) => {
       entry.pending = false
       if (body && body.ok === true && body.value !== undefined) {
-        entry.takeover = body.value.takeover === true
+        entry.convertToPath = body.value.convertToPath === true
         entry.at = Date.now()
       }
     })
@@ -102,47 +98,96 @@ function refreshPasteVerdict(label) {
 }
 
 function onFocusCapture() {
-  refreshPasteVerdict(currentModelLabel())
+  refreshPathFallbackDecision(currentModelLabel())
 }
 
-function onPasteCapture(event) {
+function filesFromEvent(event) {
+  return filesFromTransfer(event.clipboardData || event.dataTransfer)
+}
+
+function canReplayImageInput(event) {
+  if (!event.target || typeof event.target.dispatchEvent !== 'function') return false
+  if (typeof DataTransfer !== 'function' || typeof File !== 'function') return false
+  return event.type === 'paste'
+    ? typeof ClipboardEvent === 'function'
+    : typeof DragEvent === 'function'
+}
+
+function errorFromResponse(res, fallback) {
+  return res.json().catch(() => ({})).then((body) => {
+    const error = new Error(body?.error?.message || fallback)
+    error.status = res.status
+    throw error
+  })
+}
+
+async function adaptImageFile(file) {
+  if (!/^image\//.test(file.type)) return file
+  const res = await fetch(`${PASTE_ROUTE}?mode=adapt`, {
+    method: 'POST',
+    body: await file.arrayBuffer(),
+  })
+  if (!res.ok) await errorFromResponse(res, `image adaptation failed (${res.status})`)
+  const mediaType = res.headers.get('content-type') || file.type
+  return new File([await res.arrayBuffer()], file.name, {
+    type: mediaType,
+    lastModified: file.lastModified,
+  })
+}
+
+function replayFiles(source, files, text) {
+  replayImageInput(source, files, text)
+}
+
+function hasFreshPathFallback(label) {
+  const cached = pathFallbackDecisions[label]
+  refreshPathFallbackDecision(label)
+  return cached !== undefined
+    && cached.at !== 0
+    && cached.convertToPath === true
+    && Date.now() - cached.at <= PASTE_VERDICT_TTL_MS
+}
+
+function onImageInputCapture(event) {
+  if (consumeReplayedImageInput(event)) return
   if (!pasteRouteAvailable) return
-  const files = pasteImageFiles(event)
-  if (files.length === 0) return
+  const files = filesFromEvent(event)
+  const images = files.filter(file => /^image\//.test(file.type))
+  if (images.length === 0) return
   const label = currentModelLabel()
-  const cached = pasteVerdicts[label]
-  refreshPasteVerdict(label)
-  if (
-    cached === undefined
-    || cached.at === 0
-    || cached.takeover !== true
-    || Date.now() - cached.at > PASTE_VERDICT_TTL_MS
-  ) {
-    return
-  }
+  const convertToPath = hasFreshPathFallback(label)
+  if (!convertToPath && !canReplayImageInput(event)) return
   event.preventDefault()
   event.stopImmediatePropagation()
-  const target = event.target
-  Promise.all(files.map((file) =>
-    file.arrayBuffer().then((buffer) =>
-      fetch(PASTE_ROUTE, { method: 'POST', body: buffer }).then((res) => {
-        if (!res.ok) {
-          return res.json().catch(() => ({})).then((body) => {
-            const error = new Error(body?.error?.message || `paste upload failed (${res.status})`)
-            error.status = res.status
-            throw error
-          })
-        }
-        return res.json()
-      }))))
-    .then((results) => {
-      const text = results.map((result) => result?.value?.path).filter(Boolean).join(' ')
-      if (text) insertText(target, `${text} `)
-    })
+  const source = { type: event.type, target: event.target }
+  const text = (event.clipboardData || event.dataTransfer)?.getData('text/plain') || ''
+  const operation = convertToPath
+    ? Promise.all(images.map((file) =>
+        file.arrayBuffer().then((buffer) =>
+          fetch(PASTE_ROUTE, { method: 'POST', body: buffer }).then((res) => {
+            if (!res.ok) return errorFromResponse(res, `paste upload failed (${res.status})`)
+            return res.json()
+          }))))
+      .then((results) => {
+        const paths = results.map((result) => result?.value?.path).filter(Boolean).join(' ')
+        if (paths) insertText(source.target, `${paths} `)
+      })
+    : Promise.all(files.map(adaptImageFile))
+      .then((adapted) => { replayFiles(source, adapted, text) })
+  operation
     .catch((error) => {
       if (error && error.status === 404) pasteRouteAvailable = false
-      console.error(`[mindseye] paste-to-path failed: ${error && error.message ? error.message : error}`)
+      console.error(`[mindseye] image input bridge failed: ${error && error.message ? error.message : error}`)
+      if (canReplayImageInput(source)) replayFiles(source, files, text)
     })
+}
+
+function onDragOverCapture(event) {
+  if (!pasteRouteAvailable || !transferHasImage(event.dataTransfer)) return
+  if (!hasFreshPathFallback(currentModelLabel())) return
+  event.preventDefault()
+  event.stopImmediatePropagation()
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
 }
 
 function maxTokenOptions(current) {
@@ -751,6 +796,11 @@ export function apply(ctx) {
     const { sessionId, attachment } = props
     const [url, setUrl] = useState(undefined)
     const [error, setError] = useState(undefined)
+    const [open, setOpen] = useState(false)
+    const openerRef = useRef(null)
+    const closeRef = useRef(null)
+    const openPreview = useCallback(() => setOpen(true), [])
+    const closePreview = useCallback(() => setOpen(false), [])
     useEffect(() => {
       let alive = true
       loadGeneratedImageUrl(sessionId, attachment)
@@ -764,16 +814,28 @@ export function apply(ctx) {
         alive = false
       }
     }, [sessionId, attachment.attachmentId])
+    useEffect(() => {
+      if (!open) return undefined
+      const opener = openerRef.current
+      closeRef.current?.focus()
+      return () => {
+        opener?.focus()
+      }
+    }, [open])
     if (error !== undefined) {
       return React.createElement('span', { style: { fontSize: 12, color: 'var(--dsw-alias-label-error)' } }, `图片加载失败：${error}`)
     }
     if (url === undefined) {
       return React.createElement('span', { style: { fontSize: 12, color: 'var(--dsw-alias-label-tertiary)' } }, '图片加载中…')
     }
-    return React.createElement('img', {
-      src: url,
+    return React.createElement(GeneratedImagePreview, {
+      url,
       alt: attachment.name ?? '生成的图片',
-      style: { maxWidth: '100%', maxHeight: 480, borderRadius: 8, objectFit: 'contain', display: 'block' },
+      open,
+      onOpen: openPreview,
+      onClose: closePreview,
+      openerRef,
+      closeRef,
     })
   }
   function GeneratedImageCard(props) {
@@ -849,12 +911,16 @@ export function apply(ctx) {
     generatedImageUrls.clear()
   }, 'dsh-mindseye: generated image urls')
   if (typeof document !== 'undefined') {
-    document.addEventListener('paste', onPasteCapture, true)
+    document.addEventListener('paste', onImageInputCapture, true)
+    document.addEventListener('dragover', onDragOverCapture, true)
+    document.addEventListener('drop', onImageInputCapture, true)
     document.addEventListener('focusin', onFocusCapture, true)
     ctx.effect(() => () => {
-      document.removeEventListener('paste', onPasteCapture, true)
+      document.removeEventListener('paste', onImageInputCapture, true)
+      document.removeEventListener('dragover', onDragOverCapture, true)
+      document.removeEventListener('drop', onImageInputCapture, true)
       document.removeEventListener('focusin', onFocusCapture, true)
-    }, 'dsh-mindseye: paste bridge')
+    }, 'dsh-mindseye: path fallback')
   }
   ctx.slots.inject('settings.plugin.item', () =>
     ctx.slots.register({

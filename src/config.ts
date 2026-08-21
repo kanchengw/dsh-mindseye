@@ -7,7 +7,6 @@ export const MINDSEYE_SETTINGS_NAMESPACE = settingsNamespace('mindseye')
 
 export interface MindsEyeConfig {
   cacheMaxEntries?: number
-  pasteToPath?: boolean
   maxBatch?: number
   memoryDir?: string
   memory?: boolean
@@ -38,7 +37,6 @@ const imageRouteSchema = z.object({
 
 export const Config: Schema<MindsEyeConfig> = z.object({
   cacheMaxEntries: z.number().step(1).min(1).max(10_000).default(500),
-  pasteToPath: z.boolean().default(true),
   maxBatch: z.number().step(1).min(1).default(5),
   memoryDir: z.string(),
   memory: z.boolean().default(true),
@@ -61,7 +59,6 @@ export function resolveMindsEyeConfig(
 } {
   return {
     ...(config?.cacheMaxEntries === undefined ? {} : { cacheMaxEntries: config.cacheMaxEntries }),
-    ...(config?.pasteToPath === undefined ? {} : { pasteToPath: config.pasteToPath }),
     ...(config?.maxBatch === undefined ? {} : { maxBatch: config.maxBatch }),
     ...(config?.memoryDir === undefined ? {} : { memoryDir: config.memoryDir }),
     ...(config?.memory === undefined ? {} : { memory: config.memory }),

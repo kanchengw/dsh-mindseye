@@ -2,6 +2,8 @@ import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
+import { adaptImageForDsh } from '../image-resize.js'
+import type { GeneratedImageMediaType } from '../types.js'
 
 const PASTE_MAX_BYTES = 25 * 1024 * 1024
 const VERDICT_TTL_MS = 15_000
@@ -25,8 +27,8 @@ export function registerPasteRoute(ctx: Context, options: PasteRouteOptions): vo
         if (req.method === 'GET') {
           try {
             const label = new URL(req.url ?? '/', 'http://localhost').searchParams.get('model') ?? ''
-            const verdict = await pasteVerdict(ctx, label)
-            writeJson(res, 200, { ok: true, value: { takeover: verdict } })
+            const convertToPath = await pathFallbackDecision(ctx, label)
+            writeJson(res, 200, { ok: true, value: { convertToPath } })
           } catch (error) {
             writeJson(res, 500, { ok: false, error: { message: String(error instanceof Error ? error.message : error) } })
           }
@@ -43,6 +45,16 @@ export function registerPasteRoute(ctx: Context, options: PasteRouteOptions): vo
             writeJson(res, 400, { ok: false, error: { message: 'not a recognized image (png/jpeg/webp/gif)' } })
             return
           }
+          const mode = new URL(req.url ?? '/', 'http://localhost').searchParams.get('mode')
+          if (mode === 'adapt') {
+            const mediaType = mediaTypeOf(ext)
+            const adapted = await adaptImageForDsh({
+              data: new Uint8Array(buffer),
+              mediaType,
+            })
+            writeImage(res, adapted.data, mediaType, adapted.adapted)
+            return
+          }
           const dir = await mkdtemp(join(tmpdir(), 'mindseye-paste-'))
           const file = join(dir, `paste${ext}`)
           await writeFile(file, buffer, { mode: 0o600 })
@@ -55,20 +67,20 @@ export function registerPasteRoute(ctx: Context, options: PasteRouteOptions): vo
   })
 }
 
-const verdicts = new Map<string, { takeover: boolean; at: number }>()
+const decisions = new Map<string, { convertToPath: boolean; at: number }>()
 
-async function pasteVerdict(ctx: Context, label: string): Promise<boolean> {
+async function pathFallbackDecision(ctx: Context, label: string): Promise<boolean> {
   if (label.trim() === '') return false
-  const cached = verdicts.get(label)
-  if (cached !== undefined && Date.now() - cached.at < VERDICT_TTL_MS) return cached.takeover
-  const takeover = await computePasteVerdict(ctx, label)
-  verdicts.delete(label)
-  verdicts.set(label, { takeover, at: Date.now() })
-  if (verdicts.size > VERDICT_CAP) {
-    const oldest = verdicts.keys().next().value
-    if (oldest !== undefined) verdicts.delete(oldest)
+  const cached = decisions.get(label)
+  if (cached !== undefined && Date.now() - cached.at < VERDICT_TTL_MS) return cached.convertToPath
+  const convertToPath = await shouldConvertImageToPath(ctx, label)
+  decisions.delete(label)
+  decisions.set(label, { convertToPath, at: Date.now() })
+  if (decisions.size > VERDICT_CAP) {
+    const oldest = decisions.keys().next().value
+    if (oldest !== undefined) decisions.delete(oldest)
   }
-  return takeover
+  return convertToPath
 }
 
 /**
@@ -76,7 +88,7 @@ async function pasteVerdict(ctx: Context, label: string): Promise<boolean> {
  * whose name appears in the selector label is confirmed text-only; any
  * image-capable match keeps the native paste.
  */
-export async function computePasteVerdict(ctx: Context, label: string): Promise<boolean> {
+export async function shouldConvertImageToPath(ctx: Context, label: string): Promise<boolean> {
   const llm = ctx.get('llm') as
     | {
         listProviders: () => Array<{ id: string }>
@@ -126,6 +138,13 @@ export function sniffImageExt(buffer: Buffer): string | undefined {
   return undefined
 }
 
+function mediaTypeOf(ext: string): GeneratedImageMediaType {
+  if (ext === '.png') return 'image/png'
+  if (ext === '.jpg') return 'image/jpeg'
+  if (ext === '.webp') return 'image/webp'
+  return 'image/gif'
+}
+
 async function readRawBody(req: {
   on: (event: 'data' | 'end' | 'error', listener: (...args: any[]) => void) => void
   destroy: () => void
@@ -155,4 +174,18 @@ function writeJson(
 ): void {
   res.writeHead(status, { 'content-type': 'application/json' })
   res.end(JSON.stringify(body))
+}
+
+function writeImage(
+  res: { writeHead: (status: number, headers: Record<string, string>) => void; end: (body: Uint8Array) => void },
+  data: Uint8Array,
+  mediaType: GeneratedImageMediaType,
+  adapted: boolean,
+): void {
+  res.writeHead(200, {
+    'content-type': mediaType,
+    'content-length': String(data.byteLength),
+    'x-mindseye-image-adapted': String(adapted),
+  })
+  res.end(data)
 }

@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest'
 import { Config, resolveMindsEyeConfig } from '../src/config.js'
 
 describe('MindsEye config schema', () => {
-  it('keeps memory enabled and takeover is no longer configurable', () => {
+  it('keeps memory enabled without exposing an image-input fallback', () => {
     const config = Config({}) as {
       memory: boolean
+      pasteToPath?: boolean
     }
     expect(config.memory).toBe(true)
+    expect(config.pasteToPath).toBeUndefined()
   })
 
   it('does not expose promptVersion as user configuration', () => {

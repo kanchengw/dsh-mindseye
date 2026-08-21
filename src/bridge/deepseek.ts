@@ -1,7 +1,9 @@
 import { getOrCreateAnonymousUserId, type AnonymousUserId } from '@deepseek-ai/dsh-anonymous-user-id'
 import type { Context } from '@deepseek-ai/cordis'
 import {
+  assertUsableApiKey,
   LlmAdapter,
+  LlmError,
   type GenerateOptions,
   type LlmModelInfo,
   type LlmProviderInfo,
@@ -9,19 +11,22 @@ import {
   type ResolvedRetryPolicy,
   type StreamChunk,
 } from '@deepseek-ai/dsh-llm'
+import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
 import {
   DeepSeekAdapter,
   resolveAdapterOptions,
   type DeepSeekConnectionOptions,
 } from '@deepseek-ai/dsh-llm-deepseek'
+import { rememberImageRef } from './image-refs.js'
 import {
   collectImageRefs,
+  messagesContainImage,
   sanitizeMessages,
   type ImageAttachmentLike,
   type MessageLike,
 } from './sanitize.js'
 
-const IMAGE_INPUT = ['text', 'image'] as const
+const COMPOSED_IMAGE_INPUT = ['text', 'image'] as const
 
 export interface NativeDeepSeek {
   adapter: DeepSeekAdapter
@@ -29,25 +34,7 @@ export interface NativeDeepSeek {
   setSource: (source: () => unknown) => void
 }
 
-interface EnvLayer {
-  get: (name: string) => { value: string | undefined } | undefined
-}
-
-function launchEnvironmentLike(env: Record<string, string | undefined>): EnvLayer {
-  return {
-    get(name) {
-      return Object.prototype.hasOwnProperty.call(env, name) ? { value: env[name] } : undefined
-    },
-  }
-}
-
-/**
- * Rebuild the stock DeepSeek adapter with the same resolution chain the
- * official `llm-deepseek` row uses: settings section, credential seam, and
- * the harness-home anonymous id.
- */
 export function createNativeDeepSeekAdapter(ctx: Context, base: unknown): NativeDeepSeek {
-  const env = launchEnvironmentLike(process.env)
   let current: () => unknown = () => base
   let lastRaw: unknown
   let lastGood: DeepSeekConnectionOptions | undefined
@@ -56,7 +43,7 @@ export function createNativeDeepSeekAdapter(ctx: Context, base: unknown): Native
     const raw = current()
     if (raw === lastRaw && lastGood !== undefined) return lastGood
     try {
-      const next = resolveAdapterOptions(raw as never, env as never)
+      const next = resolveAdapterOptions(raw as never, launchEnvironmentOf(ctx))
       lastRaw = raw
       lastGood = next
       return next
@@ -70,27 +57,35 @@ export function createNativeDeepSeekAdapter(ctx: Context, base: unknown): Native
   }
 
   const resolveApiKey = async (connection: DeepSeekConnectionOptions): Promise<string> => {
-    const ref = String(connection.apiKeyEnv)
+    const ref = connection.apiKeyEnv
     const credentials = ctx.get('credentials') as
       | { resolve: (ref: unknown) => Promise<{ value: string } | undefined> }
       | undefined
     if (credentials !== undefined) {
-      const hit = await credentials.resolve(connection.apiKeyEnv)
-      const value = hit?.value.trim()
-      if (value !== undefined && value !== '') return value
+      const hit = await credentials.resolve(ref)
+      if (hit !== undefined) return assertUsableApiKey(hit.value, 'mindseye', ref)
+    } else {
+      const ambient = launchEnvironmentOf(ctx).get(String(ref))
+      if (ambient !== undefined && ambient.value.length > 0) {
+        return assertUsableApiKey(ambient.value, 'mindseye', ref)
+      }
     }
-    const ambient = env.get(ref)
-    if (ambient !== undefined && ambient.value !== undefined && ambient.value.trim() !== '') {
-      return ambient.value.trim()
-    }
-    throw new Error(`mindseye: no API key for the native DeepSeek route (${ref})`)
+    throw new LlmError(
+      `mindseye: no API key for provider route "deepseek-official" (${String(ref)})`,
+      'MISSING_CREDENTIAL',
+    )
   }
 
   let userId: AnonymousUserId | undefined
   const resolveUserId = (): AnonymousUserId => userId ??= getOrCreateAnonymousUserId()
 
   return {
-    adapter: new DeepSeekAdapter({ options, resolveApiKey, resolveUserId }),
+    adapter: new DeepSeekAdapter({
+      options,
+      resolveApiKey,
+      resolveUserId,
+      resolveAttachments: () => ctx.get('attachments'),
+    }),
     options,
     setSource: (source) => {
       current = source
@@ -98,12 +93,6 @@ export function createNativeDeepSeekAdapter(ctx: Context, base: unknown): Native
   }
 }
 
-/**
- * The minimal stealth adapter: delegates every call to the real DeepSeek
- * adapter, stamps image input so admission passes, and rewrites image blocks
- * into attachment markers before delegating the stream. All vision work stays
- * in the MindsEye tools.
- */
 export class VisionWrapperAdapter extends LlmAdapter {
   constructor(
     private readonly native: DeepSeekAdapter,
@@ -122,7 +111,7 @@ export class VisionWrapperAdapter extends LlmAdapter {
 
   async listModels(provider: string): Promise<readonly LlmModelInfo[]> {
     const listed = await this.native.listModels(provider)
-    return listed.map((model) => ({ ...model, inputModalities: IMAGE_INPUT }))
+    return listed.map(model => ({ ...model, inputModalities: COMPOSED_IMAGE_INPUT }))
   }
 
   async resolveModel(
@@ -131,15 +120,27 @@ export class VisionWrapperAdapter extends LlmAdapter {
     signal?: AbortSignal,
   ): Promise<LlmResolvedModelInfo> {
     const resolved = await this.native.resolveModel(provider, model, signal)
-    return { ...resolved, inputModalities: IMAGE_INPUT }
+    return { ...resolved, inputModalities: COMPOSED_IMAGE_INPUT }
   }
 
   async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     const messages = options.messages as unknown as MessageLike[]
+    if (!messagesContainImage(messages)) {
+      yield* this.native.stream(options)
+      return
+    }
+
     for (const ref of collectImageRefs(messages)) {
       const id = String(ref.attachmentId ?? ref.id ?? '')
-      if (id !== '') this.imageRefs.set(id, ref)
+      if (id !== '') rememberImageRef(this.imageRefs, id, ref)
     }
+
+    const nativeModel = await this.native.resolveModel(options.provider, options.model, options.signal)
+    if (nativeModel.inputModalities?.includes('image') === true) {
+      yield* this.native.stream(options)
+      return
+    }
+
     const sanitized = sanitizeMessages(messages) as unknown as typeof options.messages
     yield* this.native.stream({ ...options, messages: sanitized })
   }

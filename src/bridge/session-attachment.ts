@@ -8,7 +8,7 @@ export interface AgentLike {
 
 /**
  * Resolve an attachment id by scanning the durable session log. The in-memory
- * vision-bridge cache can be empty after a restart or when old messages were
+ * image-reference cache can be empty after a restart or when old messages were
  * sanitized, so the log is the authoritative reference source.
  */
 export function sessionAttachmentOf(

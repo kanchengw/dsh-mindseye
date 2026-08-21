@@ -127,4 +127,73 @@ describe('generateImagesWithMindsEye', () => {
       size: '1440x2560',
     }, [route], undefined)
   })
+
+  it('resizes an over-limit provider image into a 1980px box before saving', async () => {
+    const original = new Uint8Array([1])
+    const resized = new Uint8Array([2])
+    const resizeImage = vi.fn(async () => resized)
+    const probeImage = vi.fn()
+      .mockReturnValueOnce({ width: 2048, height: 1024, format: 'jpeg' })
+      .mockReturnValueOnce({ width: 1980, height: 990, format: 'jpeg' })
+    const saveImage = vi.fn(async () => ({
+      attachmentId: 'image-1',
+      mediaType: 'image/jpeg',
+      bytes: resized.byteLength,
+      width: 1980,
+      height: 990,
+    } as ImageAttachmentRef))
+
+    const result = await generateImagesWithMindsEye({ request: '生成横图' }, {
+      generate: async () => ({
+        images: [{ data: original, mediaType: 'image/jpeg' as const }],
+        provider: 'images.example',
+        model: 'image-model',
+        attempts: [],
+      }),
+      saveImage,
+      probeImage,
+      resizeImage,
+    }, [route])
+
+    expect(resizeImage).toHaveBeenCalledWith({
+      data: original,
+      mediaType: 'image/jpeg',
+      width: 1980,
+      height: 1980,
+    })
+    expect(saveImage).toHaveBeenCalledWith(expect.objectContaining({ data: resized }))
+    expect(result.images[0]).toEqual(expect.objectContaining({
+      width: 1980,
+      height: 990,
+      sourceWidth: 2048,
+      sourceHeight: 1024,
+    }))
+  })
+
+  it('does not re-encode a provider image at the 2000px host limit', async () => {
+    const original = new Uint8Array([1])
+    const resizeImage = vi.fn()
+    const saveImage = vi.fn(async () => ({
+      attachmentId: 'image-1',
+      mediaType: 'image/jpeg',
+      bytes: original.byteLength,
+      width: 2000,
+      height: 1000,
+    } as ImageAttachmentRef))
+
+    await generateImagesWithMindsEye({ request: '生成横图' }, {
+      generate: async () => ({
+        images: [{ data: original, mediaType: 'image/jpeg' as const }],
+        provider: 'images.example',
+        model: 'image-model',
+        attempts: [],
+      }),
+      saveImage,
+      probeImage: () => ({ width: 2000, height: 1000, format: 'jpeg' }),
+      resizeImage,
+    }, [route])
+
+    expect(resizeImage).not.toHaveBeenCalled()
+    expect(saveImage).toHaveBeenCalledWith(expect.objectContaining({ data: original }))
+  })
 })

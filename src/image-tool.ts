@@ -1,4 +1,8 @@
 import { fingerprintBytes } from './evidence.js'
+import {
+  adaptImageForDsh,
+  type DshImageResizeInput,
+} from './image-resize.js'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type {
   GeneratedImageMediaType,
@@ -26,6 +30,8 @@ export interface SavedGeneratedImage {
   width: number
   height: number
   format: string
+  sourceWidth?: number
+  sourceHeight?: number
 }
 
 export interface ImageGenerationToolResult {
@@ -55,6 +61,7 @@ export interface ImageGenerationToolDeps {
     name?: string
   }) => Promise<ImageAttachmentRef>
   probeImage: (bytes: Uint8Array) => { width: number; height: number; format: string }
+  resizeImage?: (input: DshImageResizeInput) => Promise<Uint8Array>
 }
 
 export async function generateImagesWithMindsEye(
@@ -67,19 +74,26 @@ export async function generateImagesWithMindsEye(
   const generated = await deps.generate(spec, routes, signal)
   const images: SavedGeneratedImage[] = []
   for (const [index, image] of generated.images.entries()) {
-    const dimensions = deps.probeImage(image.data)
+    const adapted = await adaptImageForDsh(image, {
+      probeImage: deps.probeImage,
+      ...(deps.resizeImage === undefined ? {} : { resizeImage: deps.resizeImage }),
+    })
     const saved = await deps.saveImage({
-      data: image.data,
+      data: adapted.data,
       mediaType: image.mediaType,
       name: `mindseye-generated-${index + 1}.${image.mediaType.slice('image/'.length)}`,
     })
     images.push({
       attachmentId: saved.attachmentId,
       attachment: saved,
-      sha256: fingerprintBytes(image.data),
-      width: dimensions.width,
-      height: dimensions.height,
-      format: dimensions.format,
+      sha256: fingerprintBytes(adapted.data),
+      width: adapted.width,
+      height: adapted.height,
+      format: adapted.format,
+      ...(adapted.adapted ? {
+        sourceWidth: adapted.sourceWidth,
+        sourceHeight: adapted.sourceHeight,
+      } : {}),
     })
   }
   return {

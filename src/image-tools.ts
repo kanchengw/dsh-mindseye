@@ -41,6 +41,14 @@ interface GeneratedImageView {
   attachment?: ImageAttachmentRef
   width?: number
   height?: number
+  sourceWidth?: number
+  sourceHeight?: number
+}
+
+function imageSizeText(image: GeneratedImageView): string {
+  const saved = `${image.width ?? 0}x${image.height ?? 0}`
+  if (image.sourceWidth === undefined || image.sourceHeight === undefined) return saved
+  return `${image.sourceWidth}×${image.sourceHeight} → ${image.width ?? 0}×${image.height ?? 0} （ dsh 对图片限制 2000x2000px ）`
 }
 
 function imageViewsOf(value: unknown): GeneratedImageView[] {
@@ -70,7 +78,7 @@ function imageToolOutput() {
       for (const image of images) {
         if (image.attachment === undefined) continue
         attachmentIds.push(String(image.attachment.attachmentId))
-        sizeTexts.push(`${image.width ?? 0}x${image.height ?? 0}, ${formatImageBytes(image.attachment.bytes ?? 0)}`)
+        sizeTexts.push(`${imageSizeText(image)}, ${formatImageBytes(image.attachment.bytes ?? 0)}`)
         blocks.push({ type: 'image', attachment: image.attachment })
       }
       if (attachmentIds.length > 0) {
@@ -93,6 +101,8 @@ function imageToolOutput() {
             attachment: image.attachment,
             width: image.width ?? 0,
             height: image.height ?? 0,
+            ...(image.sourceWidth === undefined ? {} : { sourceWidth: image.sourceWidth }),
+            ...(image.sourceHeight === undefined ? {} : { sourceHeight: image.sourceHeight }),
           })),
         usage,
       } as unknown as JsonValue
@@ -106,7 +116,7 @@ function imageToolPresentResult(_args: unknown, result: unknown) {
   const sizeTexts: string[] = []
   for (const image of meta?.images ?? []) {
     if (image.attachment === undefined) continue
-    sizeTexts.push(`${image.width ?? 0}x${image.height ?? 0}, ${formatImageBytes(image.attachment.bytes ?? 0)}`)
+    sizeTexts.push(`${imageSizeText(image)}, ${formatImageBytes(image.attachment.bytes ?? 0)}`)
     blocks.push({ type: 'image', attachment: image.attachment })
   }
   if (blocks.length > 0) {

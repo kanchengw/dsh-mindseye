@@ -263,5 +263,60 @@ describe('image edit tool', () => {
     expect(onGenerated).toHaveBeenCalledOnce()
     expect(clearPrepared).toHaveBeenCalledWith('edit-1', exec.agent.session)
   })
+
+  it('resizes an oversized edit result before saving it as an attachment', async () => {
+    const original = new Uint8Array([1])
+    const resized = new Uint8Array([2])
+    const resizeImage = vi.fn(async () => resized)
+    const probeImage = vi.fn()
+      .mockReturnValueOnce({ width: 758, height: 696, format: 'png' })
+      .mockReturnValueOnce({ width: 2048, height: 2048, format: 'jpeg' })
+      .mockReturnValueOnce({ width: 1980, height: 1980, format: 'jpeg' })
+    const saveImage = vi.fn(async () => ({
+      attachmentId: 'generated-1',
+      mediaType: 'image/jpeg',
+      bytes: resized.byteLength,
+      width: 1980,
+      height: 1980,
+    } as ImageAttachmentRef))
+    const tool = createImageEditTool({
+      routes: () => [route],
+      editsRoutes: () => [route],
+      generate: async () => ({
+        images: [{ data: original, mediaType: 'image/jpeg' as const }],
+        provider: 'images.example',
+        model: 'image-model',
+        attempts: [],
+      }),
+      readImage: async () => new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+      probeImage,
+      resizeImage,
+      saveImage,
+      loadPrepared: () => ({ currentRequest: '改成深色主题' }),
+    })
+
+    const result = await tool.execute({
+      intentId: 'edit-2',
+      attachmentId: 'sha256:source',
+    }, {} as never) as { images: Array<{
+      width: number
+      height: number
+      sourceWidth?: number
+      sourceHeight?: number
+    }> }
+
+    expect(resizeImage).toHaveBeenCalledOnce()
+    expect(saveImage).toHaveBeenCalledWith(expect.objectContaining({ data: resized }))
+    expect(result.images[0]).toEqual(expect.objectContaining({
+      width: 1980,
+      height: 1980,
+      sourceWidth: 2048,
+      sourceHeight: 2048,
+    }))
+    expect(tool.output.render({ intentId: 'edit-2' }, result as never)).toContainEqual({
+      type: 'text',
+      text: '(token_usage=n/a, 2048×2048 → 1980×1980 （ dsh 对图片限制 2000x2000px ）, 1B)',
+    })
+  })
 })
 

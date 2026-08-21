@@ -12,10 +12,11 @@ import { resolveApiKeyValue } from './credentials.js'
 import { resolveRoutes, routeKindForIntent } from './routes.js'
 import { buildBatchPrompt, buildPrompt } from './prompt.js'
 import { runProviderChain, runVisionBatchChain, type BatchVisionResult } from './providers.js'
-import { registerHistorySanitizer, runTakeover } from './bridge/takeover.js'
+import { runTakeover } from './bridge/takeover.js'
 import { registerPasteRoute } from './bridge/paste.js'
-import { messagesContainImage, type ImageAttachmentLike } from './bridge/sanitize.js'
-import { sanitizeSessionSurface } from './bridge/session-surface.js'
+import { rememberImageRef } from './bridge/image-refs.js'
+import { registerImageTurnActivation } from './bridge/image-turn.js'
+import type { ImageAttachmentLike } from './bridge/sanitize.js'
 import { sessionAttachmentOf } from './bridge/session-attachment.js'
 import { readImageWithMindsEye, readImagesWithMindsEye } from './tool.js'
 import { runImageGenerationChain } from './image-generation.js'
@@ -91,11 +92,10 @@ export async function apply(ctx: Context, config: MindsEyeConfig = {}): Promise<
   if (memoryStore !== undefined) await memoryStore.init()
 
   const takeover = (async () => {
-    ctx.logger?.info('mindseye: takeover enabled by default')
     const bridge = await runTakeover(ctx)
     imageRefs = bridge.imageRefs
     if (bridge.kind === 'skipped') {
-      ctx.logger?.warn('mindseye: takeover unavailable; continuing in official adapter mode')
+      ctx.logger?.warn('mindseye: native image bridge unavailable; using the path fallback for text-only models')
     }
   })()
 
@@ -132,11 +132,7 @@ export async function apply(ctx: Context, config: MindsEyeConfig = {}): Promise<
   })
   await Promise.all([settingsReady, takeover])
 
-  registerHistorySanitizer(ctx, imageRefs)
-
-  registerPasteRoute(ctx, {
-    enabled: () => currentConfig.pasteToPath !== false,
-  })
+  registerPasteRoute(ctx, { enabled: () => true })
 
   ctx.inject(['credentials'], (credentialsCtx) => {
     credentials = credentialsCtx.credentials
@@ -174,9 +170,9 @@ export async function apply(ctx: Context, config: MindsEyeConfig = {}): Promise<
             `mindseye: ${input.attachmentId} 看起来是本地文件路径；本地路径请用 path 参数，附件 id 形如 sha256:...`,
           )
         }
-        throw new Error(`mindseye: attachment ${input.attachmentId} is not available to the vision bridge`)
+        throw new Error(`mindseye: attachment ${input.attachmentId} is not available`)
       }
-      imageRefs.set(input.attachmentId, ref)
+      rememberImageRef(imageRefs, input.attachmentId, ref)
       const stored = await attachments.readImage(ref)
       return stored.data
     }
@@ -212,7 +208,7 @@ export async function apply(ctx: Context, config: MindsEyeConfig = {}): Promise<
   }): Promise<ImageAttachmentRef> => {
     const ref: ImageAttachmentRef = await ctx.attachments.saveImage(input)
     const attachmentId = String(ref.attachmentId)
-    imageRefs.set(attachmentId, ref)
+    rememberImageRef(imageRefs, attachmentId, ref)
     return ref
   }
 
@@ -519,25 +515,7 @@ export async function apply(ctx: Context, config: MindsEyeConfig = {}): Promise<
     },
   }));
 
-  (ctx as any).on('agent/pre-step', async (payload: any, next: () => Promise<unknown>) => {
-    const decision = await next()
-    if (decision !== null && typeof decision === 'object' && (decision as any).kind === 'reject') {
-      return decision
-    }
-    try {
-      sanitizeSessionSurface(payload?.agent?.session)
-    } catch (error) {
-      ctx.logger?.warn('mindseye: failed to shadow-sanitize the session surface', error)
-    }
-    if (Array.isArray(payload?.messages) && messagesContainImage(payload.messages)) {
-      try {
-        activateVisionTools()
-      } catch (error) {
-        ctx.logger?.warn('mindseye: failed to auto-mount vision tools on an image turn', error)
-      }
-    }
-    return decision
-  })
+  registerImageTurnActivation(ctx, activateVisionTools)
 }
 
 interface VisionToolSpec {

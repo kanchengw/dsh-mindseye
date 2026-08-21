@@ -59,16 +59,6 @@ export function sanitizeMessages(messages: readonly MessageLike[]): MessageLike[
   return changed ? next : (messages as MessageLike[])
 }
 
-/**
- * Rewrite image blocks inside one content array into attachment markers.
- * Shared by message sanitization and session-surface shadow replacement.
- */
-export function sanitizeContentBlocks(
-  blocks: unknown[],
-): { blocks: unknown[]; changed: boolean } {
-  return rewriteBlocks(blocks)
-}
-
 export function collectImageRefs(messages: readonly MessageLike[]): ImageAttachmentLike[] {
   const refs: ImageAttachmentLike[] = []
   const seen = new Set<string>()
