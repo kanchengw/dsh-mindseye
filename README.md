@@ -4,94 +4,92 @@
 
 [![dsh.so security](https://www.dsh.so/badges/dsh-mindseye.svg)](https://www.dsh.so/artifact/dsh-mindseye/)
 
-> Let DeepSeek see images natively — model-driven vision tools for DeepSeek Harness
+> Intent-driven vision, image generation, and visible browser automation for DeepSeek Harness.
 
 [English](README.md) | [中文](README.zh-CN.md)
 
 Current version: 0.2.6
 
-MindsEye is a vision plugin for DeepSeek Harness (dsh). Pasted images stay visible in the conversation while DeepSeek keeps reasoning and the vision model does the seeing. The plugin exposes task-specific vision tools that the model selects by intent; each tool maps to a fixed intent and model route, returns structured JSON, and reduces repeated calls through caching and evidence reuse.
-
-## Core Experience
-
-- **Paste and see**: images enter the dsh conversation as native attachments; native multimodal DeepSeek models receive them unchanged, while text-only DeepSeek models keep the same selector entry and use the MindsEye adapter bridge
-- **Model picks the intent, plugin routes the model**: `mindseye_read_image` takes an `intent` (visual-qa / ocr / layout / chart / color / pixel-diff / general) plus optional `extract` for combined structured evidence in one call; `mindseye_ground` stays separate for coordinates
-- **Generated images appear in the conversation**: `mindseye_generate_image` delegates to a dedicated image generation model and returns the result as a dsh attachment, without auto-saving to the project or running automatic verification
-- **Automatic mounting on image turns**: vision tools are registered when an image message arrives; text-only turns keep only one activation entry so tools do not occupy model context permanently
-- **Visible browser handoff**: GUI automation opens a separate visible Chrome/Edge agent window; `auto` follows the supported system default and falls back when the default browser is not tested
-- **Batch reads in one call**: multiple images are read together, with exponential split fallback on batch 4xx so a failure affects only the failed image
-- **Route-safe history**: multimodal routes keep image blocks intact; text-only requests receive attachment markers without mutating the durable session surface
-- **Every call is transparent**: provider, model, latency, token usage, and fallback markers are returned for auditability
-
-## Browser Automation
-
-When enabled, MindsEye opens a separate visible Chrome/Edge session for navigation, screenshots, clicks, typing, key presses, and scrolling. If a page requires CAPTCHA, login, or permission confirmation, the run pauses on a native dsh question card so the user can take over the browser, resume after completing the step, or abandon the run. It does not attach to the user's existing browser profile.
+MindsEye is a plugin for [DeepSeek Harness](https://github.com/haiziyao/dsh). It gives text-only models access to image understanding, image generation, and optional browser automation while keeping the DSH conversation as the main user experience.
 
 ![Interaction](assets/ScreenShot_interaction.png)
 
-## Implemented Features
+## Capabilities
 
-### Image Input
+### Image understanding
 
-- Native paste/drag through dsh without duplicate provider or model entries
-- `paste-to-path` fallback only when the adapter bridge is unavailable and the selected model is confirmed text-only
-- `mindseye_read_image` general vision, supporting local paths, single attachment ids, and batch attachment ids
+- Preserves DSH image attachments instead of asking users to select local files manually.
+- Automatically mounts vision tools on image turns. Text-only turns keep a single activation entry until vision is needed.
+- `mindseye_read_image` handles visual questions and focused tasks such as OCR, layout, charts, colors, and pixel differences.
+- `mindseye_ground` returns a target's pixel bounding box for downstream actions such as clicking or cropping.
+- Supports single-image and multi-image reads, with structured results for images, evidence, answers, and call metadata.
 
-### Tools and Routing
+### Image generation and editing
 
-| Tool | Intent | Route | Batch |
-| --- | --- | --- | --- |
-| `mindseye_read_image` | General vision QA + `intent` tasks (ocr / layout / chart / color / pixel-diff / general), optional `extract` for combined evidence | understand / extract per intent | Yes |
-| `mindseye_ground` | Target pixel coordinate location | locate | No |
+- `mindseye_generate_image` sends a user's image request to the configured image-generation route.
+- `mindseye_edit_image` sends a DSH image attachment and an edit request to the configured image-editing route.
+- Generated images are returned as native DSH attachments and displayed in the conversation.
+- Generation does not automatically save files to the project or run a verification pass.
 
-- `understand / extract / locate` model routes are independently configurable and fall back to the general understanding model when unset
-- Vision tools auto-mount on image turns; text-only turns keep only `mindseye_vision_activate` so tools do not permanently consume model context
-- Structured JSON: `images` / `evidence` / `answer` / `meta`; `meta` includes real token usage, call attempts, and fallback markers
-- Exact cache: image sha256 + normalized query + region + baseUrl + model + prompt version; a hit skips the vision model call
+### Browser automation
 
-### Image Generation
+When `gui.enabled` is turned on, MindsEye opens a separate visible Chrome or Edge session. The GUI tools can open pages, take snapshots, wait, click, type, send key presses, scroll, and close the session.
 
-- `mindseye_generate_image(intentId)`: text-to-image through `image.generate`
-- `mindseye_edit_image(intentId, attachmentId)`: image-to-image through `image.edit`, sending the reference image to the provider
-- Generated results are displayed as dsh attachments with a `(token_usage=..., widthxheight, size)` audit line
+If a page requires CAPTCHA, login, or permission confirmation, the run pauses on a native DSH question card. The user can:
 
+- take over the visible browser and complete the step;
+- skip the first handoff question when the step may already be complete; or
+- abandon the run.
 
-### Providers
+After the user resumes, MindsEye checks the page state before returning control to the model. The browser uses an isolated session and does not attach to the user's existing Chrome or Edge profile. GUI actions require a fresh snapshot after each action so element references and coordinates cannot silently become stale.
 
-- OpenAI-compatible Chat Completions and Responses protocols
-- `vision.fallbacks` is the recognition-chain fallback list; image generation and editing use the ordered `image.generate` and `image.edit` chains directly
-- Image routes expose configurable `endpoint`, `bodyMode` (`json` or `multipart`), and `imageField` for provider compatibility
-- Multi-image batch calls with exponential fallback (batch 4xx retries by halving; `locate` does not support batch)
+## Tools
 
-### Memory
+| Tool | Purpose |
+| --- | --- |
+| `mindseye_plan` | Extracts the current request and prepares the intent context used by downstream tools. |
+| `mindseye_read_image` | Answers questions about one or more images and extracts focused visual evidence. |
+| `mindseye_ground` | Locates a target and returns its pixel bounding box. |
+| `mindseye_generate_image` | Generates an image from the user's request. |
+| `mindseye_edit_image` | Edits a supplied image attachment. |
+| `mindseye_vision_activate` | Mounts the vision tools during a text-only turn. |
+| `mindseye_gui_open` / `snapshot` / `wait` | Opens a browser session and observes its current state. |
+| `mindseye_gui_click` / `type` / `keypress` / `scroll` | Performs a state-checked browser action. |
+| `mindseye_gui_close` | Closes the current browser session. |
 
-- Image-level hard facts are persisted by sha256, with evidence evicted by capacity LRU (default 1000 entries)
-- Soft memory uses BM25 retrieval of historical Q&A injected as context, evicted by capacity (default 1000 entries)
-- `mindseye_memory_put / get / search / diff` are exposed as dsh tools; calls are visible in the session and audited
+The memory tools are optional and expose explicit DSH operations for storing, retrieving, searching, and comparing image-related records.
 
-### Data Handling and Security
+## Configuration
 
-- **Native attachments first**: image-capable models keep native dsh attachments; MindsEye associates images by attachment id and does not ask the user to choose local files manually
-- **Automatic temporary path fallback**: if the adapter bridge is unavailable and the current model is confirmed text-only, freshly pasted or dropped PNG, JPEG, WebP, or GIF files (up to 25 MiB each) are validated, stored in an isolated system temp directory, and returned as paths. Temp files use `0600` mode
-- **External vision calls**: image bytes and question text are sent only to the vision provider's Base URL when a MindsEye tool executes; configure only services you trust
-- **Credentials and cache**: API keys resolve from environment variables, dsh Credentials, or plugin settings and are sent as Bearer auth to the matching provider only. The exact cache lives only in the current dsh process memory (max 500 entries), is never persisted, and clears on process exit
-- **Execution boundary**: the plugin does not start shells or execute downloaded code. GUI automation may start a local Chrome/Edge child process when explicitly enabled; it uses a separate browser session and does not attach to the user's existing profile. The normal web paste fallback only reads the temporary image just created by the plugin; tools also accept dsh attachment ids
+Configure MindsEye from the DSH settings card or the plugin configuration.
 
-### dsh Web Settings Card
+- `vision.routes`: independent routes for `understand`, `extract`, and `locate`.
+- `vision.fallbacks`: fallback routes for vision calls.
+- `image.generate`: ordered image-generation routes.
+- `image.edit`: ordered image-editing routes.
+- `gui.enabled`: enables the visible browser tools. It is disabled by default.
+- `gui.browser`: `auto`, `chrome`, or `edge`.
+- `gui.restrictHosts`: enables host allowlisting when set to `true`.
+- `gui.allowedHosts`: hosts allowed when host restriction is enabled.
+- `gui.maxSteps` and `gui.timeoutMs`: limits for one browser run.
 
-- `understand / extract / locate` routes can be added as needed; unset routes fall back to the default model
-- Base URL, API key (masked with eye toggle), model id, protocol (explicit), and common Max Tokens values
-- The DeepSeek bridge decorates the existing `deepseek-official` route in place: the selector keeps one provider and one copy of each model, native image models pass through unchanged, and text-only requests are sanitized only at the adapter boundary
+Vision routes use OpenAI-compatible Chat Completions or Responses APIs. Image routes support JSON and multipart request bodies so different image providers can be configured independently.
 
-## Installation
+## Data and Safety
+
+- Image-capable models keep native DSH image blocks. Text-only fallback paths use isolated temporary files created for the current paste operation.
+- Image bytes and questions are sent to the configured provider only when a MindsEye tool makes that provider call.
+- Credentials come from DSH credentials, environment variables, or plugin settings and are sent only to the matching provider.
+- Browser automation starts a local Chrome or Edge child process only when explicitly enabled. It does not use the user's existing browser profile and does not execute downloaded code.
+- Browser navigation can be restricted to an explicit host allowlist.
+
+## Install
 
 ```sh
 npx @deepseek-ai/dsh plugin --profile web add dsh-mindseye
 ```
 
-Restart dsh web after installation. The adapter bridge is automatic and has no user-facing switch; a failed bridge restores the official adapter and enables the path fallback.
-
-On first use, configure one general vision model (Base URL, API key, model id) in the MindsEye settings card; unconfigured OCR / locate routes fall back to the general model automatically.
+Restart DSH Web after installation. Then configure at least one vision route in the MindsEye settings card. Unconfigured focused vision routes fall back to the general understanding route when available.
 
 ## Development
 

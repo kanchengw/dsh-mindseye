@@ -4,85 +4,84 @@
 
 [![dsh.so security](https://www.dsh.so/badges/dsh-mindseye.svg)](https://www.dsh.so/artifact/dsh-mindseye/)
 
-> 让 DeepSeek 原生看图 —— model-driven vision tools for DeepSeek Harness
+> 面向 DeepSeek Harness 的意图驱动视觉、生图和可视浏览器自动化插件。
 
 [English](README.md) | [中文](README.zh-CN.md)
 
 当前版本：0.2.6
 
-MindsEye 是一个 DeepSeek Harness（dsh）vision 插件。粘贴图片后，图片原样显示在会话里，DeepSeek 继续负责思考，视觉模型负责看图。插件暴露一组按任务拆分的视觉工具，由模型根据用户意图选择工具，每个工具固定映射到对应的意图和模型路由，返回结构化 JSON，并通过缓存与证据复用减少重复开销。
-
-## 核心体验
-
-- **粘贴即看图**：图片以 dsh 原生附件进入会话；DeepSeek 原生多模态模型完整直收，纯文本 DeepSeek 模型保持同一个选择器条目并通过 MindsEye 适配器桥接
-- **模型选意图，插件管路由**：`mindseye_read_image` 用 `intent` 选任务（visual-qa / ocr / layout / chart / color / pixel-diff / general），可加 `extract` 一次拿多种结构化证据；`mindseye_ground` 单独负责坐标定位
-- **生图即所见**：`mindseye_generate_image` 委托专用图片生成模型，结果作为 dsh 附件直接显示在会话中，不自动保存、不自动回验
-- **图片轮自动挂载**：检测到图片消息时自动注册视觉工具；纯文本轮默认只保留一个激活入口，避免常驻占用模型上下文
-- **可视浏览器接管**：浏览器自动化会打开独立的可见 Chrome/Edge agent 窗口；`auto` 优先跟随受支持的系统默认浏览器，其他浏览器回退到已安装的 Chrome/Edge
-- **多图一次读**：批量读取多张图片，批量遇 4xx 按指数拆分降级，失败只影响单张
-- **历史按路由处理**：多模态路由完整保留图片块；文本路由只在请求边界接收附件标记，不改写持久会话表面
-- **每次调用透明**：返回 provider、model、延迟、token usage、fallback 标记，成本可审计
-
-## 浏览器自动化
-
-启用后，MindsEye 会打开独立的可见 Chrome/Edge 浏览器会话，执行打开页面、截图、点击、输入、按键和滚动。遇到验证码、登录或权限确认时，任务会暂停在 dsh 原生提问卡片上，用户可以接管浏览器，完成后继续，或放弃任务。插件不会接管用户现有的浏览器 profile。
+MindsEye 是 [DeepSeek Harness](https://github.com/haiziyao/dsh) 的插件，为纯文本模型提供图片理解、图片生成和可选的浏览器自动化能力，同时保留 DSH 会话作为主要用户交互界面。
 
 ![交互](assets/ScreenShot_interaction.png)
 
+## 核心能力
 
-## 已实现功能
+### 图片理解
 
-### 图片入口
+- 保留 DSH 原生图片附件，不要求用户手动选择本地文件。
+- 图片轮自动挂载视觉工具；纯文本轮只保留一个激活入口，需要看图时再挂载。
+- `mindseye_read_image` 支持通用视觉问答，以及 OCR、布局、图表、颜色和像素差异等专项任务。
+- `mindseye_ground` 返回目标在原图中的像素边界框，可用于点击、裁剪等后续操作。
+- 支持单图和多图读取，并返回图片、证据、答案和调用元数据等结构化结果。
 
-- 通过 dsh 原生粘贴/拖放，不增加 provider 或模型分身
-- `paste-to-path` 仅在适配器桥接不可用且当前模型确认是纯文本时兜底
-- `mindseye_read_image` 通用看图，支持本地路径、单张附件 id、批量附件 id
+### 图片生成与编辑
 
-### 工具与路由
+- `mindseye_generate_image` 将用户的生图要求发送到已配置的生图路由。
+- `mindseye_edit_image` 将 DSH 图片附件和编辑要求发送到已配置的图像编辑路由。
+- 生成图片以 DSH 原生附件形式返回，并直接显示在会话中。
+- 生图不会自动保存到项目，也不会自动执行回验。
 
-| 工具 | 意图 | 路由 | 批量 |
-| --- | --- | --- | --- |
-| `mindseye_read_image` | 通用视觉问答 + `intent` 专项（ocr / layout / chart / color / pixel-diff / general），可选 `extract` 一次多证据 | understand / extract | 支持 |
-| `mindseye_ground` | 目标像素坐标定位 | locate | 不支持 |
+### 浏览器自动化
 
-- `understand / extract / locate` 三档模型路由可分别配置，未配置时自动回退到通用理解模型
-- 图片轮自动挂载视觉工具；纯文本轮只保留 `mindseye_vision_activate` 作为激活入口，工具不会常驻挤占模型上下文
-- 结构化 JSON：`images` / `evidence` / `answer` / `meta`，`meta` 含真实 token usage、调用尝试与回退标记
-- 精确缓存：图片 sha256 + 归一化问题 + region + baseUrl + model + prompt 版本，命中时不再调用视觉模型
+启用 `gui.enabled` 后，MindsEye 会打开独立的可见 Chrome 或 Edge 浏览器会话。GUI 工具支持打开页面、截图、等待、点击、输入、按键、滚动和关闭会话。
 
-### 图片生成
+遇到验证码、登录或权限确认时，任务会暂停在 DSH 原生提问卡片上。用户可以：
 
-- `mindseye_generate_image(intentId)`：文生图，走 `image.generate`
-- `mindseye_edit_image(intentId, attachmentId)`：图生图，走 `image.edit`，把参考图原图交给生图模型
-- 生成结果作为 dsh 附件直接显示在会话中，附带 `(token_usage=..., 宽x高, 大小)` 审计行
+- 接管可见浏览器并完成操作；
+- 如果验证可能已经完成，跳过第一页交接问题；
+- 放弃当前任务。
 
+用户选择继续后，MindsEye 会重新检查页面状态，确认恢复后再把控制权交还给模型。浏览器使用独立会话，不接管用户已有的 Chrome 或 Edge profile。每次浏览器动作后都必须重新截图，避免继续使用已经失效的元素引用或坐标。
 
-### Provider
+## 工具
 
-- OpenAI-compatible Chat Completions 与 Responses 协议
-- `vision.fallbacks` 是识别链路的备用模型列表；图片生成和编辑分别使用有序的 `image.generate` / `image.edit` 链路
-- 生图路由支持配置 `endpoint`、`bodyMode`（`json` / `multipart`）、`imageField`，适配不同 provider
-- 多图批量调用 + 指数降级（批量 4xx 按半数拆分重试，`locate` 不支持批量）
+| 工具 | 用途 |
+| --- | --- |
+| `mindseye_plan` | 提取当前用户要求，并准备后续工具使用的意图上下文。 |
+| `mindseye_read_image` | 回答一张或多张图片的问题，并提取专项视觉证据。 |
+| `mindseye_ground` | 定位目标并返回像素边界框。 |
+| `mindseye_generate_image` | 根据用户要求生成图片。 |
+| `mindseye_edit_image` | 编辑用户提供的图片附件。 |
+| `mindseye_vision_activate` | 在纯文本轮挂载视觉工具。 |
+| `mindseye_gui_open` / `snapshot` / `wait` | 打开浏览器会话并观察当前页面。 |
+| `mindseye_gui_click` / `type` / `keypress` / `scroll` | 执行带页面状态校验的浏览器动作。 |
+| `mindseye_gui_close` | 关闭当前浏览器会话。 |
 
-### 记忆
+记忆工具是可选的，提供显式的 DSH 操作，用于存储、读取、搜索和比较图片相关记录。
 
-- 图片级硬事实按 sha256 持久化，evidence 按容量 LRU 淘汰（默认 1000 条）
-- 软记忆 BM25 检索历史问答注入上下文，历史问答按容量滚动淘汰（默认 1000 条）
-- `mindseye_memory_put / get / search / diff` 四个 dsh 工具，调用在会话中可见，并记录审计
+## 配置
 
-### 数据处理与安全边界
+可以通过 DSH 设置卡或插件配置管理 MindsEye。
 
-- **原生附件优先**：支持图片输入的模型保留 dsh 原生附件；MindsEye 通过附件 ID 关联图片，不要求用户手动选择本地文件。
-- **自动临时路径降级**：适配器桥接不可用且当前模型确认是纯文本时，`paste-to-path` 会校验用户刚粘贴或拖放的 PNG、JPEG、WebP 或 GIF（单张最多 25 MiB），保存到独立的系统临时目录并自动返回分配的路径。临时文件以 `0600` mode 创建，用户无需手动提供路径。
-- **外部视觉调用**：只有执行任一 MindsEye 视觉工具并调用用户配置的视觉 Provider 时，图片字节与问题内容才会发送到该 Provider 的 Base URL。用户应仅配置自己信任的服务。
-- **凭据与缓存**：API Key 从环境变量、dsh Credentials 或插件设置解析，并仅以 Bearer 认证发送给对应 Provider。精确缓存只保存在当前 dsh 进程内存，最多 500 条；它不写入持久化数据库，并会在进程退出时清空。
-- **执行边界**：插件不启动 shell，也不执行下载后的代码。用户明确启用浏览器自动化后，插件可能启动本地 Chrome/Edge 子进程；浏览器使用独立会话，不接管用户已有的个人 profile。正常 Web 粘贴降级只读取插件刚为该次粘贴生成的临时图片；工具接口也支持 dsh 附件 ID。
+- `vision.routes`：分别配置 `understand`、`extract` 和 `locate` 路由。
+- `vision.fallbacks`：视觉调用的备用路由。
+- `image.generate`：有序的图片生成路由。
+- `image.edit`：有序的图片编辑路由。
+- `gui.enabled`：启用可见浏览器工具，默认关闭。
+- `gui.browser`：`auto`、`chrome` 或 `edge`。
+- `gui.restrictHosts`：设为 `true` 时启用主机白名单。
+- `gui.allowedHosts`：启用白名单后允许访问的主机。
+- `gui.maxSteps` 与 `gui.timeoutMs`：单次浏览器运行的步数和超时限制。
 
-### dsh Web 设置卡
+视觉路由支持 OpenAI-compatible Chat Completions 或 Responses API。图片路由支持 JSON 和 multipart 请求体，可以独立配置不同的图片服务商。
 
-- `understand / extract / locate` 三条路由，按需添加，未配置自动回退默认模型
-- Base URL、API Key（脱敏 + 眼睛切换）、模型 ID、协议（显式选择）、Max Tokens 常用值下拉
-- DeepSeek 桥接在原 `deepseek-official` 路由上原位装饰：选择器仍只有一个 provider 和一份模型；原生视觉模型不改写，纯文本请求只在 adapter 边界净化
+## 数据与安全
+
+- 支持图片的模型继续接收 DSH 原生图片块；纯文本降级路径只使用当前粘贴操作创建的隔离临时文件。
+- 只有 MindsEye 工具实际调用视觉服务商时，图片字节和问题内容才会发送给对应服务商。
+- 凭据来自 DSH Credentials、环境变量或插件设置，并只发送给匹配的服务商。
+- 只有明确启用浏览器自动化时，插件才会启动本地 Chrome 或 Edge 子进程；它不使用用户现有浏览器 profile，也不执行下载后的代码。
+- 浏览器访问可以限制为明确配置的主机白名单。
 
 ## 安装
 
@@ -90,9 +89,7 @@ MindsEye 是一个 DeepSeek Harness（dsh）vision 插件。粘贴图片后，�
 npx @deepseek-ai/dsh plugin --profile web add dsh-mindseye
 ```
 
-安装后重启 dsh web。适配器桥接默认自动启用且不提供用户开关；桥接失败时恢复官方适配器并启用路径兜底。
-
-首次使用请在 MindsEye 设置卡中配置一个通用视觉模型（Base URL、API Key、模型 ID）；未配置的 OCR / 定位路由会自动回退到通用模型。
+安装后重启 DSH Web，然后在 MindsEye 设置卡中至少配置一条视觉路由。未配置的专项视觉路由在有可用通用理解路由时会自动回退。
 
 ## 开发
 
