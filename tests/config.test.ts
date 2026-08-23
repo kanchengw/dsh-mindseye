@@ -47,15 +47,68 @@ describe('MindsEye config schema', () => {
     expect(config.image.generate[0]?.imageField).toBeUndefined()
   })
 
-  it('drops removed legacy route fields instead of normalizing them', () => {
+  it('migrates legacy route fields into the current config shape', () => {
     const legacy = {
       routes: { understand: [{ model: 'v', baseUrl: 'https://v.example', apiKeyEnv: 'V', protocol: 'responses' }] },
       fallbacks: [{ model: 'f', baseUrl: 'https://f.example', apiKeyEnv: 'F', protocol: 'responses' }],
       image: { routes: [{ model: 'g', baseUrl: 'https://g.example', apiKeyEnv: 'G' }], edits: [] },
     } as const
     const normalized = resolveMindsEyeConfig(Config(legacy as any) as any)
-    expect(normalized.vision.routes).toEqual({})
-    expect(normalized.vision.fallbacks).toEqual([])
-    expect(normalized.image.generate).toEqual([])
+    expect(normalized.vision.routes.understand?.[0]?.model).toBe('v')
+    expect(normalized.vision.fallbacks[0]?.model).toBe('f')
+    expect(normalized.image.generate[0]?.model).toBe('g')
+  })
+
+  it('prefers current route fields when legacy and current fields coexist', () => {
+    const normalized = resolveMindsEyeConfig({
+      routes: { understand: [{ model: 'legacy', baseUrl: 'https://legacy.example', apiKeyEnv: 'L', protocol: 'responses' }] },
+      vision: {
+        routes: { understand: [{ model: 'current', baseUrl: 'https://current.example', apiKeyEnv: 'C', protocol: 'responses' }] },
+        fallbacks: [],
+      },
+      image: {
+        routes: [{ model: 'legacy-image', baseUrl: 'https://legacy.example', apiKeyEnv: 'L' }],
+        generate: [{ model: 'current-image', baseUrl: 'https://current.example', apiKeyEnv: 'C' }],
+        edit: [],
+        edits: [],
+      },
+    })
+    expect(normalized.vision.routes.understand?.[0]?.model).toBe('current')
+    expect(normalized.image.generate[0]?.model).toBe('current-image')
+  })
+
+  it('keeps GUI disabled by default and applies safe limits', () => {
+    const config = Config({}) as any
+
+    expect(config.gui).toMatchObject({
+      enabled: false,
+      browser: 'auto',
+      restrictHosts: false,
+      allowedHosts: [],
+      executablePath: '',
+      maxSteps: 20,
+      timeoutMs: 30_000,
+    })
+    expect(() => Config({ gui: { maxSteps: 0 } } as any)).toThrow()
+    expect(() => Config({ gui: { timeoutMs: 99 } } as any)).toThrow()
+  })
+
+  it('preserves an explicit GUI executable path during normalization', () => {
+    const normalized = resolveMindsEyeConfig({
+      gui: {
+        enabled: true,
+        allowedHosts: ['localhost'],
+        executablePath: 'C:\\Chrome\\chrome.exe',
+      },
+    })
+
+    expect(normalized.gui).toMatchObject({
+      enabled: true,
+      browser: 'auto',
+      allowedHosts: ['localhost'],
+      executablePath: 'C:\\Chrome\\chrome.exe',
+      maxSteps: 20,
+      timeoutMs: 30_000,
+    })
   })
 })

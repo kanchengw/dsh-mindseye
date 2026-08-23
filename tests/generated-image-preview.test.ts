@@ -6,8 +6,15 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({
 }))
 
 import { GeneratedImagePreview } from '../src/client/generated-image-preview.js'
+import { CSS } from '../src/client/styles.js'
 
 describe('GeneratedImagePreview', () => {
+  it('declares an intrinsic-size image that fits its container without cropping', () => {
+    expect(CSS).toContain('.mindseye-generated-image{display:block;width:auto;height:auto;max-width:100%;max-height:480px;')
+    expect(CSS).toContain('object-fit:contain;object-position:center}')
+    expect(CSS).toContain('.mindseye-generated-image-trigger{appearance:none;display:block;width:100%;max-width:100%;overflow:hidden')
+  })
+
   it('opens the generated image from a keyboard-accessible zoom control', () => {
     const onOpen = vi.fn()
     const onClose = vi.fn()

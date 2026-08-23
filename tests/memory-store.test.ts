@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -145,6 +145,54 @@ describe('JsonlMemoryStore', () => {
     expect(store.getEvidence('sha256:a')).toBeDefined()
     expect(store.getEvidence('sha256:b')).toBeUndefined()
     await store.close()
+  })
+
+  it('compacts evidence jsonl after capacity eviction', async () => {
+    const { store, dir } = await tempStore(2)
+    await store.putEvidence(evidence('sha256:a', { createdAt: 1, lastAccessedAt: 1 }))
+    await store.putEvidence(evidence('sha256:b', { createdAt: 2, lastAccessedAt: 2 }))
+    await store.putEvidence(evidence('sha256:c', { createdAt: 3, lastAccessedAt: 3 }))
+    await store.close()
+
+    const lines = (await readFile(join(dir, 'evidence.jsonl'), 'utf8'))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as VisualEvidenceRecord)
+    expect(lines.map((item) => item.sha256).sort()).toEqual(['sha256:b', 'sha256:c'])
+    expect(lines).toHaveLength(2)
+  })
+
+  it('compacts analysis jsonl after capacity eviction', async () => {
+    const { store, dir } = await tempStore(2)
+    await store.putAnalysis(analysis('old', 'sha256:a', { createdAt: 1, lastAccessedAt: 1 }))
+    await store.putAnalysis(analysis('mid', 'sha256:b', { createdAt: 2, lastAccessedAt: 2 }))
+    await store.putAnalysis(analysis('new', 'sha256:c', { createdAt: 3, lastAccessedAt: 3 }))
+    await store.close()
+
+    const lines = (await readFile(join(dir, 'analysis.jsonl'), 'utf8'))
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line) as VisualAnalysisRecord)
+    expect(lines.map((item) => item.id).sort()).toEqual(['mid', 'new'])
+    expect(lines).toHaveLength(2)
+  })
+
+  it('compacts legacy duplicate records when reopening', async () => {
+    const { store, dir } = await tempStore()
+    await store.close()
+    await writeFile(join(dir, 'evidence.jsonl'), [
+      JSON.stringify(evidence('sha256:a', { ocr: { fullText: 'old' } })),
+      JSON.stringify(evidence('sha256:a', { ocr: { fullText: 'new' } })),
+    ].join('\n') + '\n', 'utf8')
+
+    const reopened = new JsonlMemoryStore({ dir })
+    await reopened.init()
+    await reopened.close()
+    const lines = (await readFile(join(dir, 'evidence.jsonl'), 'utf8'))
+      .trim()
+      .split(/\r?\n/)
+    expect(lines).toHaveLength(1)
+    expect(reopened.getEvidence('sha256:a')?.ocr?.fullText).toBe('new')
   })
 
   it('skips corrupted jsonl lines on load', async () => {

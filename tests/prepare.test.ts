@@ -26,6 +26,17 @@ describe('prepare stage', () => {
     expect(latestUserRequest(exec)).toBe('再给我一张小一点的')
   })
 
+  it('reuses the previous task for a retry-only user turn', () => {
+    const exec = session(['用 ME 搜索 DeepSeek Harness 新闻', '再次尝试'])
+    expect(latestUserRequest(exec)).toBe('用 ME 搜索 DeepSeek Harness 新闻')
+    expect(prepareVision(exec).historyContext).toBeUndefined()
+  })
+
+  it('keeps a substantive follow-up as the current request', () => {
+    const exec = session(['生成一张眼睛 logo', '换个黑白风格'])
+    expect(latestUserRequest(exec)).toBe('换个黑白风格')
+  })
+
   it('prefers the current user message over model-provided request text', () => {
     const prepared = prepareGeneration({
       request: 'A long expanded description that must be ignored',

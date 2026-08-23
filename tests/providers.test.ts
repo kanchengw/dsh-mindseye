@@ -106,6 +106,15 @@ describe('runProviderChain', () => {
       fetchImpl: fetchMock as unknown as typeof fetch,
     })).rejects.toBeInstanceOf(VisionProviderError)
   })
+
+  it('keeps structured provider failures readable', async () => {
+    await expect(runProviderChain({
+      routes: [route],
+      dataUrl: 'data:image/png;base64,aa',
+      prompt: 'describe',
+      resolveApiKey: async () => { throw { code: 'AUTH_FAILED', detail: 'bad key' } },
+    })).rejects.toThrow('AUTH_FAILED')
+  })
 })
 
 describe('parseBatchText', () => {

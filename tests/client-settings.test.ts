@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   decodeSettings,
   encodeSettings,
+  guiValidationError,
   imageRouteIsComplete,
   imageRouteValidationError,
+  parseAllowedHosts,
   optionalRouteValidationError,
   routeIsComplete,
   routeValidationError,
@@ -91,6 +93,45 @@ describe('client settings codec', () => {
     const encoded = encodeSettings(draft)
     expect(encoded.vision.fallbacks).toEqual([fallback])
     expect(encoded.vision.routes).toEqual({})
+  })
+
+  it('round-trips browser automation settings without losing the allowlist', () => {
+    const draft = decodeSettings({
+      gui: {
+        enabled: true,
+        browser: 'edge',
+        restrictHosts: true,
+        allowedHosts: ['www.baidu.com', 'baidu.com'],
+        executablePath: 'C:\\Browser\\chrome.exe',
+        maxSteps: 12,
+        timeoutMs: 15_000,
+      },
+    }) as any
+    expect(draft.gui).toMatchObject({
+      enabled: true,
+      browser: 'edge',
+      restrictHosts: true,
+      allowedHosts: ['www.baidu.com', 'baidu.com'],
+      executablePath: 'C:\\Browser\\chrome.exe',
+      maxSteps: 12,
+      timeoutMs: 15_000,
+    })
+    expect(encodeSettings(draft).gui).toMatchObject(draft.gui)
+  })
+
+  it('requires an allowlisted host when browser automation is enabled', () => {
+    expect(guiValidationError({ enabled: true, restrictHosts: true, allowedHosts: [] })).toBeDefined()
+    expect(guiValidationError({ enabled: false, restrictHosts: true, allowedHosts: [] })).toBeUndefined()
+    expect(guiValidationError({ enabled: true, restrictHosts: true, allowedHosts: ['www.baidu.com'] })).toBeUndefined()
+    expect(guiValidationError({ enabled: true, restrictHosts: false, allowedHosts: [] })).toBeUndefined()
+  })
+
+  it('parses editable allowlist text into unique host names', () => {
+    expect(parseAllowedHosts('www.baidu.com\nbaidu.com, www.baidu.com\n github.com ')).toEqual([
+      'www.baidu.com',
+      'baidu.com',
+      'github.com',
+    ])
   })
 
   it('validates model, url and credential fields', () => {

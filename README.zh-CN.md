@@ -8,7 +8,7 @@
 
 [English](README.md) | [中文](README.zh-CN.md)
 
-当前版本：0.2.4
+当前版本：0.2.6
 
 MindsEye 是一个 DeepSeek Harness（dsh）vision 插件。粘贴图片后，图片原样显示在会话里，DeepSeek 继续负责思考，视觉模型负责看图。插件暴露一组按任务拆分的视觉工具，由模型根据用户意图选择工具，每个工具固定映射到对应的意图和模型路由，返回结构化 JSON，并通过缓存与证据复用减少重复开销。
 
@@ -18,9 +18,14 @@ MindsEye 是一个 DeepSeek Harness（dsh）vision 插件。粘贴图片后，�
 - **模型选意图，插件管路由**：`mindseye_read_image` 用 `intent` 选任务（visual-qa / ocr / layout / chart / color / pixel-diff / general），可加 `extract` 一次拿多种结构化证据；`mindseye_ground` 单独负责坐标定位
 - **生图即所见**：`mindseye_generate_image` 委托专用图片生成模型，结果作为 dsh 附件直接显示在会话中，不自动保存、不自动回验
 - **图片轮自动挂载**：检测到图片消息时自动注册视觉工具；纯文本轮默认只保留一个激活入口，避免常驻占用模型上下文
+- **可视浏览器接管**：浏览器自动化会打开独立的可见 Chrome/Edge agent 窗口；`auto` 优先跟随受支持的系统默认浏览器，其他浏览器回退到已安装的 Chrome/Edge
 - **多图一次读**：批量读取多张图片，批量遇 4xx 按指数拆分降级，失败只影响单张
 - **历史按路由处理**：多模态路由完整保留图片块；文本路由只在请求边界接收附件标记，不改写持久会话表面
 - **每次调用透明**：返回 provider、model、延迟、token usage、fallback 标记，成本可审计
+
+## 浏览器自动化
+
+启用后，MindsEye 会打开独立的可见 Chrome/Edge 浏览器会话，执行打开页面、截图、点击、输入、按键和滚动。遇到验证码、登录或权限确认时，任务会暂停在 dsh 原生提问卡片上，用户可以接管浏览器，完成后继续，或放弃任务。插件不会接管用户现有的浏览器 profile。
 
 ![交互](assets/ScreenShot_interaction.png)
 
@@ -71,7 +76,7 @@ MindsEye 是一个 DeepSeek Harness（dsh）vision 插件。粘贴图片后，�
 - **自动临时路径降级**：适配器桥接不可用且当前模型确认是纯文本时，`paste-to-path` 会校验用户刚粘贴或拖放的 PNG、JPEG、WebP 或 GIF（单张最多 25 MiB），保存到独立的系统临时目录并自动返回分配的路径。临时文件以 `0600` mode 创建，用户无需手动提供路径。
 - **外部视觉调用**：只有执行任一 MindsEye 视觉工具并调用用户配置的视觉 Provider 时，图片字节与问题内容才会发送到该 Provider 的 Base URL。用户应仅配置自己信任的服务。
 - **凭据与缓存**：API Key 从环境变量、dsh Credentials 或插件设置解析，并仅以 Bearer 认证发送给对应 Provider。精确缓存只保存在当前 dsh 进程内存，最多 500 条；它不写入持久化数据库，并会在进程退出时清空。
-- **执行边界**：插件不启动 shell、子进程或下载后执行代码。正常 Web 粘贴降级只读取插件刚为该次粘贴生成的临时图片；工具接口也支持 dsh 附件 ID。
+- **执行边界**：插件不启动 shell，也不执行下载后的代码。用户明确启用浏览器自动化后，插件可能启动本地 Chrome/Edge 子进程；浏览器使用独立会话，不接管用户已有的个人 profile。正常 Web 粘贴降级只读取插件刚为该次粘贴生成的临时图片；工具接口也支持 dsh 附件 ID。
 
 ### dsh Web 设置卡
 

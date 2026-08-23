@@ -26,6 +26,23 @@ export function emptyImageRoute() {
   }
 }
 
+export function emptyGui() {
+  return {
+    enabled: false,
+    browser: 'auto',
+    restrictHosts: false,
+    allowedHosts: [],
+    executablePath: '',
+    maxSteps: 20,
+    timeoutMs: 30000,
+  }
+}
+
+export function parseAllowedHosts(value) {
+  if (typeof value !== 'string') return []
+  return [...new Set(value.split(/[,，\s]+/).map((host) => host.trim()).filter(Boolean))]
+}
+
 function configRouteToDraft(route) {
   if (route === undefined || route === null || typeof route !== 'object') {
     return emptyRoute()
@@ -52,6 +69,23 @@ function configImageRouteToDraft(route) {
     endpoint: typeof route.endpoint === 'string' ? route.endpoint : '',
     bodyMode: route.bodyMode === 'multipart' ? 'multipart' : 'json',
     imageField: typeof route.imageField === 'string' ? route.imageField : 'image',
+  }
+}
+
+function configGuiToDraft(gui) {
+  if (gui === undefined || gui === null || typeof gui !== 'object') {
+    return emptyGui()
+  }
+  return {
+    enabled: gui.enabled === true,
+    browser: gui.browser === 'chrome' || gui.browser === 'edge' ? gui.browser : 'auto',
+    restrictHosts: gui.restrictHosts === true,
+    allowedHosts: Array.isArray(gui.allowedHosts)
+      ? parseAllowedHosts(gui.allowedHosts.join('\n'))
+      : [],
+    executablePath: typeof gui.executablePath === 'string' ? gui.executablePath : '',
+    maxSteps: Number.isInteger(gui.maxSteps) && gui.maxSteps > 0 ? gui.maxSteps : 20,
+    timeoutMs: Number.isInteger(gui.timeoutMs) && gui.timeoutMs >= 100 ? gui.timeoutMs : 30000,
   }
 }
 
@@ -82,6 +116,7 @@ export function decodeSettings(section) {
     visionFallbacks: fallbacks,
     imageGenerateRest: imageRoutes.slice(1),
     imageEditRest: imageEditsRoutes.slice(1),
+    gui: configGuiToDraft(value.gui),
   }
 }
 
@@ -146,6 +181,14 @@ export function optionalImageRouteValidationError(route) {
   return imageRouteValidationError(route)
 }
 
+export function guiValidationError(gui) {
+  if (gui?.enabled !== true || gui?.restrictHosts !== true) return undefined
+  const hosts = Array.isArray(gui.allowedHosts)
+    ? gui.allowedHosts.filter((host) => typeof host === 'string' && host.trim() !== '')
+    : []
+  return hosts.length > 0 ? undefined : '启用白名单时至少填写一个允许访问的域名'
+}
+
 export function optionalRouteValidationError(route) {
   if (
     trimmed(route.model) === ''
@@ -204,12 +247,14 @@ export function encodeSettings(draft) {
   const imageEditsRoutes = imageRouteIsComplete(draft.imageEdits)
     ? [imageRouteToConfig(draft.imageEdits)]
     : []
+  const gui = configGuiToDraft(draft.gui)
   return {
     vision: { routes, fallbacks: Array.isArray(draft.visionFallbacks) ? draft.visionFallbacks : [] },
     image: {
       generate: [...imageRoutes, ...(Array.isArray(draft.imageGenerateRest) ? draft.imageGenerateRest : [])],
       edit: [...imageEditsRoutes, ...(Array.isArray(draft.imageEditRest) ? draft.imageEditRest : [])],
     },
+    gui,
   }
 }
 

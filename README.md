@@ -8,7 +8,7 @@
 
 [English](README.md) | [中文](README.zh-CN.md)
 
-Current version: 0.2.4
+Current version: 0.2.6
 
 MindsEye is a vision plugin for DeepSeek Harness (dsh). Pasted images stay visible in the conversation while DeepSeek keeps reasoning and the vision model does the seeing. The plugin exposes task-specific vision tools that the model selects by intent; each tool maps to a fixed intent and model route, returns structured JSON, and reduces repeated calls through caching and evidence reuse.
 
@@ -18,9 +18,14 @@ MindsEye is a vision plugin for DeepSeek Harness (dsh). Pasted images stay visib
 - **Model picks the intent, plugin routes the model**: `mindseye_read_image` takes an `intent` (visual-qa / ocr / layout / chart / color / pixel-diff / general) plus optional `extract` for combined structured evidence in one call; `mindseye_ground` stays separate for coordinates
 - **Generated images appear in the conversation**: `mindseye_generate_image` delegates to a dedicated image generation model and returns the result as a dsh attachment, without auto-saving to the project or running automatic verification
 - **Automatic mounting on image turns**: vision tools are registered when an image message arrives; text-only turns keep only one activation entry so tools do not occupy model context permanently
+- **Visible browser handoff**: GUI automation opens a separate visible Chrome/Edge agent window; `auto` follows the supported system default and falls back when the default browser is not tested
 - **Batch reads in one call**: multiple images are read together, with exponential split fallback on batch 4xx so a failure affects only the failed image
 - **Route-safe history**: multimodal routes keep image blocks intact; text-only requests receive attachment markers without mutating the durable session surface
 - **Every call is transparent**: provider, model, latency, token usage, and fallback markers are returned for auditability
+
+## Browser Automation
+
+When enabled, MindsEye opens a separate visible Chrome/Edge session for navigation, screenshots, clicks, typing, key presses, and scrolling. If a page requires CAPTCHA, login, or permission confirmation, the run pauses on a native dsh question card so the user can take over the browser, resume after completing the step, or abandon the run. It does not attach to the user's existing browser profile.
 
 ![Interaction](assets/ScreenShot_interaction.png)
 
@@ -70,7 +75,7 @@ MindsEye is a vision plugin for DeepSeek Harness (dsh). Pasted images stay visib
 - **Automatic temporary path fallback**: if the adapter bridge is unavailable and the current model is confirmed text-only, freshly pasted or dropped PNG, JPEG, WebP, or GIF files (up to 25 MiB each) are validated, stored in an isolated system temp directory, and returned as paths. Temp files use `0600` mode
 - **External vision calls**: image bytes and question text are sent only to the vision provider's Base URL when a MindsEye tool executes; configure only services you trust
 - **Credentials and cache**: API keys resolve from environment variables, dsh Credentials, or plugin settings and are sent as Bearer auth to the matching provider only. The exact cache lives only in the current dsh process memory (max 500 entries), is never persisted, and clears on process exit
-- **Execution boundary**: the plugin never starts shells, child processes, or executes downloaded code. The normal web paste fallback only reads the temporary image just created by the plugin; tools also accept dsh attachment ids
+- **Execution boundary**: the plugin does not start shells or execute downloaded code. GUI automation may start a local Chrome/Edge child process when explicitly enabled; it uses a separate browser session and does not attach to the user's existing profile. The normal web paste fallback only reads the temporary image just created by the plugin; tools also accept dsh attachment ids
 
 ### dsh Web Settings Card
 

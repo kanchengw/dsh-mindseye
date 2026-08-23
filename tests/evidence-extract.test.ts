@@ -79,6 +79,13 @@ describe('extractStructured', () => {
     expect(structuredEvidenceIntent('ocr')).toBe(true)
     expect(structuredEvidenceIntent('visual-qa')).toBe(false)
   })
+
+  it('rejects grounding boxes outside the source image bounds', () => {
+    expect(extractStructured(JSON.stringify({
+      answer: '搜索框',
+      evidence: { elements: [{ type: 'input', box: { x1: 281, y1: 306, x2: 999, y2: 474 } }] },
+    }), 'grounding', undefined, { width: 800, height: 600 })).toBeUndefined()
+  })
 })
 
 describe('extractStructured with extract', () => {

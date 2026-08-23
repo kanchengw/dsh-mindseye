@@ -30,18 +30,20 @@ import { isVisionIntent } from './schema.js'
 import { JsonlMemoryStore } from './memory/store.js'
 import { registerMemoryTools } from './memory/tools.js'
 import { MetricsCollector, type MetricEvent } from './observability/metrics.js'
+import { createPuppeteerBrowser, GuiSessionManager } from './gui/browser.js'
+import { createGuiTools } from './gui/tools.js'
 
 export { Config, MINDSEYE_SETTINGS_NAMESPACE }
 export type { MindsEyeConfig }
 
 export const name = 'mindseye'
-export const inject = ['tools', 'attachments']
+export const inject = ['tools', 'attachments', 'userQuestions']
 
 export async function apply(ctx: Context, config: MindsEyeConfig = {}): Promise<void> {
   let currentConfig: MindsEyeConfig = resolveMindsEyeConfig(config)
   let settingsWritable = true
   let credentials: CredentialProvider | undefined
-  let persistSettings: ((section: { vision: unknown; image: unknown }) => Promise<void>) | undefined
+  let persistSettings: ((section: { vision: unknown; image: unknown; gui: unknown }) => Promise<void>) | undefined
   let imageRefs = new Map<string, ImageAttachmentLike>()
   const preparedIntents = new Map<string, { session: unknown; prepared: PreparedGeneration; lastAccessedAt: number }>()
   const PREPARED_TTL_MS = 10 * 60 * 1000
@@ -124,6 +126,7 @@ export async function apply(ctx: Context, config: MindsEyeConfig = {}): Promise<
       scope.watch(() => {
         currentConfig = resolveMindsEyeConfig(scope.get() as MindsEyeConfig)
         syncImageTools()
+        syncGuiTools()
       })
 
       clearTimeout(timer)
@@ -387,6 +390,51 @@ export async function apply(ctx: Context, config: MindsEyeConfig = {}): Promise<
   ctx.effect(() => () => {
     for (const dispose of imageToolDisposers.splice(0)) dispose()
   }, 'mindseye: image tools')
+
+  let guiBrowserPromise: ReturnType<typeof createPuppeteerBrowser> | undefined
+  let guiManager: GuiSessionManager | undefined
+  const guiToolDisposers: Array<() => void> = []
+  const syncGuiTools = (): void => {
+    for (const dispose of guiToolDisposers.splice(0)) dispose()
+    const previousManager = guiManager
+    guiManager = undefined
+    guiBrowserPromise = undefined
+    void previousManager?.closeAll().catch(() => undefined)
+    if (currentConfig.gui?.enabled !== true) {
+      return
+    }
+    const guiConfig = currentConfig.gui
+    const browser = {
+      open: async (url: string, options: { timeoutMs: number }) => {
+        guiBrowserPromise ??= createPuppeteerBrowser({
+          browser: guiConfig.browser ?? 'auto',
+          headless: false,
+          ...(guiConfig.executablePath === undefined ? {} : { executablePath: guiConfig.executablePath }),
+        })
+        return (await guiBrowserPromise).open(url, options)
+      },
+    }
+    guiManager = new GuiSessionManager({
+      browser,
+      saveImage: async (input) => {
+        const ref = await ctx.attachments.saveImage(input)
+        return ref
+      },
+      restrictHosts: guiConfig.restrictHosts ?? false,
+      allowedHosts: guiConfig.allowedHosts ?? [],
+      maxSteps: guiConfig.maxSteps ?? 20,
+      timeoutMs: guiConfig.timeoutMs ?? 30_000,
+    })
+    for (const tool of createGuiTools(guiManager, {
+      askUser: (request) => ctx.userQuestions.ask(request as never),
+    })) guiToolDisposers.push(ctx.tools.register(tool))
+  }
+  syncGuiTools()
+
+  ctx.effect(() => async () => {
+    for (const dispose of guiToolDisposers.splice(0)) dispose()
+    await guiManager?.closeAll()
+  }, 'mindseye: gui tools')
 
   ctx.tools.register(defineTool({
     name: 'mindseye_plan',
@@ -796,7 +844,7 @@ function registerConfigRoute(
   ctx: Context,
   getConfig: () => MindsEyeConfig,
   isWritable: () => boolean,
-  getPersist: () => ((section: { vision: unknown; image: unknown }) => Promise<void>) | undefined,
+  getPersist: () => ((section: { vision: unknown; image: unknown; gui: unknown }) => Promise<void>) | undefined,
 ): void {
   ctx.inject(['webServer'], (webCtx: any) => {
     webCtx.webServer.register({
@@ -827,6 +875,7 @@ function registerConfigRoute(
               generate: validated.image.generate,
               edit: validated.image.edit,
             },
+            gui: validated.gui,
           }
           await getPersist()?.(section)
           writeJson(res, 200, {

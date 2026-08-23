@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile, stat } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { bm25Scores } from './bm25.js'
 import type {
@@ -52,6 +52,8 @@ export class JsonlMemoryStore {
     }
     this.evictEvidence()
     this.evictAnalyses()
+    await writeJsonLines(this.evidencePath, [...this.evidence.values()])
+    await writeJsonLines(this.analysisPath, this.analyses)
   }
 
   async putEvidence(record: VisualEvidenceRecord): Promise<void> {
@@ -61,8 +63,9 @@ export class JsonlMemoryStore {
       : { ...existing, ...definedFields(record) }
     if (merged.lastAccessedAt === undefined) merged.lastAccessedAt = Date.now()
     this.evidence.set(record.sha256, merged)
+    const shouldCompact = existing !== undefined || this.evictEvidence()
     await this.appendLine(this.evidencePath, merged)
-    this.evictEvidence()
+    if (shouldCompact) await this.replaceJsonLines(this.evidencePath, [...this.evidence.values()])
   }
 
   getEvidence(sha256: string): VisualEvidenceRecord | undefined {
@@ -84,7 +87,7 @@ export class JsonlMemoryStore {
   async putAnalysis(record: VisualAnalysisRecord): Promise<void> {
     this.analyses.push(record)
     await this.appendLine(this.analysisPath, record)
-    this.evictAnalyses()
+    if (this.evictAnalyses()) await this.replaceJsonLines(this.analysisPath, this.analyses)
   }
 
   async getAnalyses(filter: AnalysisFilter = {}): Promise<VisualAnalysisRecord[]> {
@@ -161,7 +164,8 @@ export class JsonlMemoryStore {
     }
   }
 
-  private evictEvidence(): void {
+  private evictEvidence(): boolean {
+    let evicted = false
     while (this.evidence.size > this.maxEntries) {
       let oldest: VisualEvidenceRecord | undefined
       for (const record of this.evidence.values()) {
@@ -171,9 +175,11 @@ export class JsonlMemoryStore {
           : oldest.lastAccessedAt ?? oldest.createdAt
         if (oldest === undefined || accessed < (oldestAccessed ?? 0)) oldest = record
       }
-      if (oldest === undefined) return
+      if (oldest === undefined) return evicted
       this.evidence.delete(oldest.sha256)
+      evicted = true
     }
+    return evicted
   }
 
   private touchEvidence(sha256: string): void {
@@ -182,7 +188,8 @@ export class JsonlMemoryStore {
     this.evidence.set(sha256, { ...record, lastAccessedAt: Date.now() })
   }
 
-  private evictAnalyses(): void {
+  private evictAnalyses(): boolean {
+    let evicted = false
     while (this.analyses.length > this.maxEntries) {
       let oldestIndex = 0
       for (let index = 1; index < this.analyses.length; index += 1) {
@@ -191,7 +198,9 @@ export class JsonlMemoryStore {
         }
       }
       this.analyses.splice(oldestIndex, 1)
+      evicted = true
     }
+    return evicted
   }
 
   private touchAnalysis(record: VisualAnalysisRecord): void {
@@ -207,6 +216,12 @@ export class JsonlMemoryStore {
   private appendLine(path: string, record: unknown): Promise<void> {
     const run = this.writeQueue.then(() =>
       appendFile(path, `${JSON.stringify(record)}\n`, 'utf8'))
+    this.writeQueue = run.then(() => undefined, () => undefined)
+    return run
+  }
+
+  private replaceJsonLines(path: string, records: unknown[]): Promise<void> {
+    const run = this.writeQueue.then(() => writeJsonLines(path, records))
     this.writeQueue = run.then(() => undefined, () => undefined)
     return run
   }
@@ -237,6 +252,13 @@ async function fileSize(path: string): Promise<number> {
   } catch {
     return 0
   }
+}
+
+async function writeJsonLines(path: string, records: unknown[]): Promise<void> {
+  const text = records.length === 0
+    ? ''
+    : records.map((record) => JSON.stringify(record)).join('\n') + '\n'
+  await writeFile(path, text, 'utf8')
 }
 
 function definedFields(record: VisualEvidenceRecord): Partial<VisualEvidenceRecord> {

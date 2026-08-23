@@ -199,7 +199,10 @@ export async function readImageWithMindsEye(
     latencyMs: Date.now() - started,
     error: '',
   }]
-  const extracted = extractStructured(vision.analysis.text, intent, extract)
+  const extracted = extractStructured(vision.analysis.text, intent, extract, {
+    width: image.width,
+    height: image.height,
+  })
   if (deps.memory !== undefined && extracted !== undefined && Object.keys(extracted.evidence).length > 0) {
     const storedFields = evidenceToRecord(extracted.evidence)
     if (Object.keys(storedFields).length > 0) {
@@ -295,6 +298,7 @@ export async function readImagesWithMindsEye(
   const errorsJson: Record<string, JsonValue> = {}
   const matchedEvidenceIds: string[] = []
   const infoBySha = new Map<string, { width: number; height: number; format: string }>()
+  const storedBySha = new Map<string, VisualEvidenceRecord>()
   for (const id of options.attachmentIds) {
     const bytes = await deps.readImage({ attachmentId: id, agent: options.agent })
     const sha256 = fingerprintBytes(bytes)
@@ -303,6 +307,7 @@ export async function readImagesWithMindsEye(
     infoBySha.set(sha256, { width: info.width, height: info.height, format: info.format })
     const stored = deps.memory?.getEvidence(sha256)
     if (stored !== undefined) {
+      storedBySha.set(sha256, stored)
       const pure = extract.length > 0
         ? pureExtractEvidenceAnswer(extract, stored)
         : pureEvidenceAnswer(options.intent, stored, options.query)
@@ -344,21 +349,63 @@ export async function readImagesWithMindsEye(
 
   const started = Date.now()
   let outcome: BatchVisionResult | undefined
+  let softMemoryHits = 0
+  let retrievalMs = 0
   if (pending.length > 0) {
+    let prompt = deps.buildBatchPrompt(options.intent, pending.map((item) => item.id), {
+      currentRequest: options.query,
+      context: options.context,
+      historyContext: options.historyContext,
+      region: options.region,
+      extract,
+    })
+    const storedContexts = pending
+      .map((item) => {
+        const stored = storedBySha.get(item.id)
+        return stored === undefined
+          ? undefined
+          : `图片 ${item.id}：${JSON.stringify(evidenceContextOf(stored))}`
+      })
+      .filter((value): value is string => value !== undefined)
+    if (storedContexts.length > 0) {
+      prompt += '\n\n已存储的图片证据（按图片 sha256 关联，可信，仅补充上下文）：\n'
+        + storedContexts.join('\n')
+    }
+
+    const softHitsBySha = new Map<string, SoftMemoryHit[]>()
+    const softStart = Date.now()
+    if (deps.memory?.searchSoftMemory !== undefined) {
+      await Promise.all(pending.map(async (item) => {
+        const hits = await deps.memory!.searchSoftMemory!({
+          query: normalizeQuery(options.query),
+          evidenceId: item.id,
+          limit: 3,
+        })
+        if (hits.length > 0) softHitsBySha.set(item.id, hits)
+      }))
+    }
+    retrievalMs = Date.now() - softStart
+    const softContexts = [...softHitsBySha.entries()].map(([sha256, hits]) =>
+      `图片 ${sha256}：${hits.map((hit) => `Q: ${hit.record.normalizedQuery}\nA: ${hit.record.answerText}`).join('\n\n')}`)
+    softMemoryHits = [...softHitsBySha.values()].reduce((sum, hits) => sum + hits.length, 0)
+    if (softContexts.length > 0) {
+      prompt += '\n\n历史参考（按图片 sha256 关联，未验证，仅供上下文补强）：\n'
+        + softContexts.join('\n\n')
+    }
     outcome = await deps.runVisionBatch({
       images: pending,
-      prompt: deps.buildBatchPrompt(options.intent, pending.map((item) => item.id), {
-        currentRequest: options.query,
-        context: options.context,
-        historyContext: options.historyContext,
-        region: options.region,
-        extract,
-      }),
+      prompt,
       routes,
     })
     for (const [id, text] of outcome.results) {
       const source = outcome.sources?.get(id) ?? { provider: routeLabel(route.baseUrl), model: route.model }
-      const structured = parseStructuredValue(text, options.intent, extract)
+      const info = infoBySha.get(id)
+      const structured = parseStructuredValue(
+        text,
+        options.intent,
+        extract,
+        info === undefined ? undefined : { width: info.width, height: info.height },
+      )
       const evidence = structured?.evidence
       resultsJson[id] = structured === undefined
         ? { text }
@@ -369,7 +416,6 @@ export async function readImagesWithMindsEye(
       if (deps.memory !== undefined && evidence !== undefined && Object.keys(evidence).length > 0) {
         const storedFields = evidenceToRecord(evidence)
         if (Object.keys(storedFields).length > 0) {
-          const info = infoBySha.get(id)
           await deps.memory.putEvidence({
             id,
             sha256: id,
@@ -431,11 +477,18 @@ export async function readImagesWithMindsEye(
       ...(outcome?.usage === undefined ? {} : { usage: outcome.usage }),
       ...(options.fallback === undefined ? {} : { fallback: options.fallback }),
       ...(matchedEvidenceIds.length === 0 ? {} : { matchedEvidenceIds }),
-      source: pending.length === 0 ? 'evidence' : 'model',
+      ...(softMemoryHits === 0 ? {} : { softMemoryHits, retrievalMs }),
+      source: pending.length === 0
+        ? 'evidence'
+        : softMemoryHits > 0
+          ? 'soft-memory'
+          : 'model',
       modelCall: pending.length > 0,
-      ...(pending.length === 0 && deps.userNotice !== false
+      ...(deps.userNotice !== false && pending.length === 0
         ? { userNotice: buildUserNotice({ cache: 'miss', source: 'evidence' }) }
-        : {}),
+        : deps.userNotice !== false && softMemoryHits > 0
+          ? { userNotice: buildUserNotice({ cache: 'miss', source: 'soft-memory', softMemoryHits }) }
+          : {}),
     },
   }
   deps.cache?.set(cacheKey, result)

@@ -357,13 +357,13 @@ export async function runProviderChain(
         model: route.model,
         ok: false,
         latencyMs: Date.now() - started,
-        error: error instanceof Error ? error.message : String(error),
+        error: formatProviderError(error),
       })
     }
   }
   throw new VisionProviderError(
     'unknown',
-    `all vision providers failed: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+    `all vision providers failed: ${formatProviderError(lastError)}`,
   )
 }
 
@@ -463,6 +463,17 @@ function extractUsage(body: Record<string, unknown>, protocol: string): TokenUsa
 
 function numberOrUndefined(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function formatProviderError(error: unknown): string {
+  if (error instanceof Error) return error.message
+  if (typeof error === 'string') return error
+  try {
+    const serialized = JSON.stringify(error)
+    return serialized === undefined ? String(error) : serialized
+  } catch {
+    return String(error)
+  }
 }
 
 function classifyHttpError(status: number, body: string): VisionProviderError {

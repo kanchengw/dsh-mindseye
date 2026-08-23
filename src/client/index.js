@@ -8,9 +8,11 @@ import {
   emptyImageRoute,
   emptyRoute,
   encodeSettings,
+  guiValidationError,
   imageRouteIsComplete,
   optionalImageRouteValidationError,
   optionalRouteValidationError,
+  parseAllowedHosts,
   routeIsComplete,
   routeValidationError,
   updateRoute,
@@ -433,6 +435,7 @@ function SettingsCard() {
   const [addedOverrides, setAddedOverrides] = useState([])
   const [pendingAdd, setPendingAdd] = useState(OVERRIDE_KINDS[0])
   const [imageEditsAdded, setImageEditsAdded] = useState(false)
+  const [newAllowedHost, setNewAllowedHost] = useState('')
 
   const load = useCallback(async () => {
     if (loading) return
@@ -478,10 +481,30 @@ function SettingsCard() {
   const imageEditsError = draft === undefined || !imageEditsAdded
     ? undefined
     : optionalImageRouteValidationError(draft.imageEdits)
+  const guiError = draft === undefined ? undefined : guiValidationError(draft.gui)
   const hasValidRoute = draft !== undefined && (
     routeIsComplete(draft.defaultRoute) || imageRouteIsComplete(draft.imagePrimary)
   )
-  const validationError = defaultError ?? Object.values(overrideErrors)[0] ?? imagePrimaryError ?? imageEditsError
+  const validationError = defaultError ?? Object.values(overrideErrors)[0] ?? imagePrimaryError ?? imageEditsError ?? guiError
+
+  const updateGui = (patch) => {
+    setDraft((current) => current === undefined
+      ? current
+      : { ...current, gui: { ...current.gui, ...patch } })
+    setStatus('')
+    setError(undefined)
+  }
+
+  const addAllowedHost = () => {
+    const host = newAllowedHost.trim()
+    if (host === '') {
+      setError('请输入要添加的域名')
+      return
+    }
+    const next = parseAllowedHosts([...draft.gui.allowedHosts, host].join('\n'))
+    updateGui({ allowedHosts: next })
+    setNewAllowedHost('')
+  }
 
   const discard = () => {
     setDraft(baseline)
@@ -694,6 +717,93 @@ function SettingsCard() {
                 : React.createElement('p', { key: 'error', className: 'mindseye-error' }, imageEditsError),
             ]),
           ],
+        ]),
+        React.createElement('section', { key: 'gui', className: 'mindseye-section' }, [
+          React.createElement('div', { key: 'title', className: 'mindseye-section-title' }, '浏览器自动化'),
+          React.createElement('p', { key: 'hint', className: 'mindseye-section-hint' },
+            '开启后可由 MindsEye 打开可见的独立浏览器窗口、截图并执行浏览器动作；默认选择系统支持的浏览器。'),
+          React.createElement('label', { key: 'toggle', className: 'mindseye-switch-row' }, [
+            React.createElement('span', { key: 'text' }, '启用浏览器自动化'),
+            React.createElement('span', { key: 'switch', className: 'mindseye-switch' }, [
+              React.createElement('input', {
+                key: 'input',
+                type: 'checkbox',
+                checked: draft.gui.enabled,
+                disabled: !writable,
+                'aria-label': '启用浏览器自动化',
+                onChange: (event) => updateGui({ enabled: event.target.checked }),
+              }),
+              React.createElement('span', { key: 'track', className: 'mindseye-switch-track', 'aria-hidden': true },
+              React.createElement('span', { className: 'mindseye-switch-thumb' })),
+            ]),
+          ]),
+          React.createElement('label', { key: 'browser', className: 'mindseye-field' }, [
+            React.createElement('span', { key: 'label' }, 'Agent 浏览器'),
+            React.createElement('select', {
+              key: 'select',
+              value: draft.gui.browser,
+              disabled: !writable,
+              onChange: (event) => updateGui({ browser: event.target.value }),
+            }, [
+              React.createElement('option', { key: 'auto', value: 'auto' }, '自动选择'),
+              React.createElement('option', { key: 'chrome', value: 'chrome' }, 'Google Chrome'),
+              React.createElement('option', { key: 'edge', value: 'edge' }, 'Microsoft Edge'),
+            ]),
+            React.createElement('small', { key: 'hint', className: 'mindseye-field-hint' },
+              '自动模式优先跟随系统默认的 Chrome 或 Edge；其他浏览器会回退到已安装的 Chrome/Edge。'),
+          ]),
+          React.createElement('label', { key: 'restrict-toggle', className: 'mindseye-switch-row' }, [
+            React.createElement('span', { key: 'text' }, '启用白名单'),
+            React.createElement('span', { key: 'switch', className: 'mindseye-switch' }, [
+              React.createElement('input', {
+                key: 'input',
+                type: 'checkbox',
+                checked: draft.gui.restrictHosts,
+                disabled: !writable,
+                'aria-label': '启用白名单',
+                onChange: (event) => updateGui({ restrictHosts: event.target.checked }),
+              }),
+              React.createElement('span', { key: 'track', className: 'mindseye-switch-track', 'aria-hidden': true },
+                React.createElement('span', { className: 'mindseye-switch-thumb' })),
+            ]),
+          ]),
+          draft.gui.restrictHosts
+            ? React.createElement('div', { key: 'hosts', className: 'mindseye-hosts-editor' }, [
+              React.createElement('div', { key: 'add', className: 'mindseye-host-add' }, [
+                React.createElement(TextInput, {
+                  key: 'input',
+                  value: newAllowedHost,
+                  onChange: setNewAllowedHost,
+                  disabled: !writable,
+                  placeholder: '输入域名，例如 www.baidu.com',
+                  ariaLabel: '添加允许访问的域名',
+                }),
+                React.createElement('button', {
+                  key: 'button',
+                  type: 'button',
+                  className: 'mindseye-host-add-button',
+                  disabled: !writable,
+                  onClick: addAllowedHost,
+                }, '添加'),
+              ]),
+              React.createElement('label', { key: 'label', className: 'mindseye-hosts-label' }, '允许访问的域名'),
+              React.createElement('textarea', {
+                key: 'textarea',
+                rows: 5,
+                value: draft.gui.allowedHosts.join('\n'),
+                disabled: !writable,
+                spellCheck: false,
+                'aria-label': '允许访问的域名列表',
+                placeholder: '每行一个域名',
+                onChange: (event) => updateGui({ allowedHosts: parseAllowedHosts(event.target.value) }),
+              }),
+              React.createElement('small', { key: 'hint', className: 'mindseye-hosts-hint' },
+                '每行一个域名，也可以直接编辑或删除。'),
+            ])
+            : null,
+          guiError === undefined
+            ? null
+            : React.createElement('p', { key: 'error', className: 'mindseye-error' }, guiError),
         ]),
         !writable
           ? React.createElement('p', { key: 'readonly', className: 'mindseye-error' }, '当前部署的设置为只读')

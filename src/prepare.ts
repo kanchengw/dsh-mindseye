@@ -1,6 +1,7 @@
 export const CONTEXT_MAX_LENGTH = 800
 export const HISTORY_WINDOW = 5
 export const GENERATION_SIZE_PATTERN = /^(?:auto|1024x1024|1536x1024|1024x1536)$/i
+const CONTINUATION_ONLY_PATTERN = /^(?:再次尝试|再试(?:一次)?|重试(?:一次)?|继续(?:刚才的(?:操作|任务))?)[\s。！!]*$/i
 
 export interface SessionLike {
   agent?: {
@@ -142,11 +143,18 @@ function isRuntimeContextSnapshot(text: string): boolean {
  */
 export function latestUserRequest(exec: SessionLike | undefined): string {
   const messages = historyEntries(exec).filter((entry) => entry.kind === 'user')
+  let latest = ''
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const text = messages[index]?.text ?? ''
-    if (text !== '') return text
+    if (text === '') continue
+    latest ||= text
+    if (!CONTINUATION_ONLY_PATTERN.test(text)) return text
   }
-  return ''
+  return latest
+}
+
+function isContinuationOnly(text: string): boolean {
+  return CONTINUATION_ONLY_PATTERN.test(text.trim())
 }
 
 export function allUserMessages(exec: SessionLike | undefined): string[] {
@@ -205,7 +213,7 @@ function selectHistory(
   if (evidence.length === 0) {
     return {
       users: entries
-        .filter((entry) => entry.kind === 'user' && entry.text !== currentRequest)
+        .filter((entry) => entry.kind === 'user' && entry.text !== currentRequest && !isContinuationOnly(entry.text))
         .slice(-HISTORY_WINDOW)
         .map((entry) => entry.text),
       toolResults: [],
@@ -214,7 +222,7 @@ function selectHistory(
   const matched = entries.filter((entry) =>
     evidence.some((item) => entry.text.includes(item) || entry.attachmentIds.includes(item)))
   const matchedUsers = matched
-    .filter((entry) => entry.kind === 'user' && entry.text !== currentRequest)
+    .filter((entry) => entry.kind === 'user' && entry.text !== currentRequest && !isContinuationOnly(entry.text))
     .slice(-HISTORY_WINDOW)
     .map((entry) => entry.text)
   const matchedTools = matched
@@ -224,7 +232,10 @@ function selectHistory(
   return {
     users: matchedUsers.length > 0
       ? matchedUsers
-      : entries.filter((entry) => entry.kind === 'user' && entry.text !== currentRequest).slice(-HISTORY_WINDOW).map((entry) => entry.text),
+      : entries
+        .filter((entry) => entry.kind === 'user' && entry.text !== currentRequest && !isContinuationOnly(entry.text))
+        .slice(-HISTORY_WINDOW)
+        .map((entry) => entry.text),
     toolResults: matchedTools,
   }
 }

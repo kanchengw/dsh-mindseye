@@ -610,6 +610,72 @@ describe('readImageWithMindsEye', () => {
     expect(first.result.meta.softMemoryHits).toBe(1)
     expect(first.result.meta.retrievalMs).toBeGreaterThanOrEqual(0)
   })
+
+  it('injects stored evidence and soft memory into a pending batch prompt', async () => {
+    let seenPrompt = ''
+    const sha256 = fingerprintBytes(new TextEncoder().encode('image-bytes'))
+    const hit: SoftMemoryHit = {
+      record: {
+        id: 'q1',
+        evidenceId: sha256,
+        intent: 'color',
+        normalizedQuery: '图片中主体颜色',
+        answerText: '历史颜色参考',
+        provider: 'qwen',
+        model: 'qwen3.6-flash',
+        promptVersion: 'v1',
+        source: 'model-inferred',
+        createdAt: 1,
+        lastAccessedAt: 1,
+        accessCount: 1,
+        importance: 0.5,
+      },
+      score: 1.1,
+    }
+    const deps = {
+      readImage: async () => new TextEncoder().encode('image-bytes'),
+      probeImage: async () => ({ width: 10, height: 20, format: 'png' }),
+      memory: {
+        getEvidence: () => ({
+          id: 'ev-1',
+          sha256,
+          width: 10,
+          height: 20,
+          format: 'png',
+          ocr: { fullText: '已存储文字' },
+          createdAt: 1,
+        } satisfies VisualEvidenceRecord),
+        putEvidence: vi.fn(),
+        searchSoftMemory: async () => [hit],
+      },
+      runVisionBatch: async ({ prompt }: { prompt: string }) => {
+        seenPrompt = prompt
+        return {
+          results: new Map([[sha256, '新的颜色答案']]),
+          errors: new Map(),
+          attempts: [{ provider: 'p', model: 'm', ok: true, latencyMs: 1, images: 1 }],
+        }
+      },
+      buildBatchPrompt: () => 'batch prompt',
+      toDataUrl: (bytes: Uint8Array, format: string) =>
+        `data:image/${format};base64,${Buffer.from(bytes).toString('base64')}`,
+    }
+    const routes = [{ model: 'm', baseUrl: 'https://p/v1', apiKeyEnv: 'K' }]
+
+    const result = await readImagesWithMindsEye(
+      { attachmentIds: ['attachment-a'], intent: 'color', query: '主体是什么颜色' },
+      deps,
+      routes,
+    )
+
+    expect(seenPrompt).toContain('已存储的图片证据')
+    expect(seenPrompt).toContain('已存储文字')
+    expect(seenPrompt).toContain('历史参考')
+    expect(seenPrompt).toContain('历史颜色参考')
+    expect(result.meta.softMemoryHits).toBe(1)
+    expect(result.meta.source).toBe('soft-memory')
+    expect(result.meta.modelCall).toBe(true)
+  })
 })
 
 describe('cache key matches tool identity', () => {

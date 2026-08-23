@@ -3,6 +3,11 @@ import type { EvidenceKind } from '../types.js'
 
 const STRUCTURED_INTENTS = new Set<VisionIntent>(['ocr', 'layout', 'grounding', 'color'])
 
+export interface ImageBounds {
+  width: number
+  height: number
+}
+
 export function structuredEvidenceIntent(intent: VisionIntent): boolean {
   return STRUCTURED_INTENTS.has(intent)
 }
@@ -11,12 +16,13 @@ export function extractStructured(
   text: string,
   intent: VisionIntent,
   extract?: EvidenceKind[],
+  bounds?: ImageBounds,
 ): { answer: string; evidence: VisualEvidence } | undefined {
   const parsed = tryParseJsonObject(text)
   if (parsed === undefined) return undefined
   if (extract !== undefined && extract.length > 0) {
     if (typeof parsed.answer !== 'string') return undefined
-    const evidence = normalizeEvidenceStrict(parsed.evidence, extract)
+    const evidence = normalizeEvidenceStrict(parsed.evidence, extract, bounds)
     return evidence === undefined ? undefined : { answer: parsed.answer, evidence }
   }
   if (!structuredEvidenceIntent(intent)) return undefined
@@ -25,19 +31,21 @@ export function extractStructured(
     if (normalized !== undefined) return normalized
   }
   if (typeof parsed.answer !== 'string') return undefined
-  return { answer: parsed.answer, evidence: normalizeEvidence(parsed.evidence) }
+  const evidence = normalizeEvidence(parsed.evidence)
+  return evidenceWithinBounds(evidence, bounds) ? { answer: parsed.answer, evidence } : undefined
 }
 
 export function parseStructuredValue(
   value: string,
   intent?: VisionIntent,
   extract?: EvidenceKind[],
+  bounds?: ImageBounds,
 ): { text: string; evidence: VisualEvidence } | undefined {
   const parsed = tryParseJsonObject(value)
   if (parsed === undefined) return undefined
   if (extract !== undefined && extract.length > 0) {
     if (typeof parsed.text !== 'string') return undefined
-    const evidence = normalizeEvidenceStrict(parsed.evidence, extract)
+    const evidence = normalizeEvidenceStrict(parsed.evidence, extract, bounds)
     return evidence === undefined ? undefined : { text: parsed.text, evidence }
   }
   if (intent === 'ocr') {
@@ -47,7 +55,8 @@ export function parseStructuredValue(
     }
   }
   if (typeof parsed.text !== 'string') return undefined
-  return { text: parsed.text, evidence: normalizeEvidence(parsed.evidence) }
+  const evidence = normalizeEvidence(parsed.evidence)
+  return evidenceWithinBounds(evidence, bounds) ? { text: parsed.text, evidence } : undefined
 }
 
 /**
@@ -142,7 +151,7 @@ export function normalizeEvidence(raw: unknown): VisualEvidence {
   return evidence
 }
 
-function normalizeEvidenceStrict(raw: unknown, requested: EvidenceKind[]): VisualEvidence | undefined {
+function normalizeEvidenceStrict(raw: unknown, requested: EvidenceKind[], bounds?: ImageBounds): VisualEvidence | undefined {
   if (!isRecord(raw)) return undefined
   const source = raw as Record<string, unknown>
   if (requested.includes('ocr')) {
@@ -168,13 +177,21 @@ function normalizeEvidenceStrict(raw: unknown, requested: EvidenceKind[]): Visua
   const elements = evidence.elements as Array<{ type: string; box?: { x1: number; y1: number; x2: number; y2: number } }> | undefined
   if (layout?.some((item) => item.region === '' || item.content === '')) return undefined
   if (colors?.some((item) => !/^#[0-9a-f]{6}$/i.test(item.hex) || (item.share !== undefined && (item.share < 0 || item.share > 1)))) return undefined
-  if (elements?.some((item) => item.type === '' || (item.box !== undefined && !validBox(item.box)))) return undefined
+  if (elements?.some((item) => item.type === '' || (item.box !== undefined && !validBox(item.box, bounds)))) return undefined
   return evidence
 }
 
-function validBox(box: { x1: number; y1: number; x2: number; y2: number }): boolean {
+function evidenceWithinBounds(evidence: VisualEvidence, bounds?: ImageBounds): boolean {
+  if (bounds === undefined) return true
+  const elements = evidence.elements as Array<{ box?: { x1: number; y1: number; x2: number; y2: number } }> | undefined
+  return elements?.every((item) => item.box === undefined || validBox(item.box, bounds)) ?? true
+}
+
+function validBox(box: { x1: number; y1: number; x2: number; y2: number }, bounds?: ImageBounds): boolean {
   return [box.x1, box.y1, box.x2, box.y2].every(Number.isFinite)
     && box.x1 <= box.x2 && box.y1 <= box.y2
+    && (bounds === undefined
+      || (box.x1 >= 0 && box.y1 >= 0 && box.x2 <= bounds.width && box.y2 <= bounds.height))
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
