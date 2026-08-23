@@ -330,7 +330,6 @@ function RouteFields(props) {
       value: value.model,
       onChange: patch('model'),
       disabled,
-      placeholder: '例如 qwen3-vl-plus',
       ariaLabel: '模型 ID',
     })),
     React.createElement(Field, {
@@ -391,7 +390,6 @@ function ImageRouteFields(props) {
       value: value.model,
       onChange: patch('model'),
       disabled,
-      placeholder: '例如 doubao-seed-2-0-pro-260215',
       ariaLabel: '图片生成模型 ID',
     })),
     React.createElement(Field, {
