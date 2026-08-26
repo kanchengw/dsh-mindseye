@@ -84,6 +84,7 @@ MindsEye 是 [DeepSeek Harness](https://github.com/haiziyao/dsh) 的插件，为
 ## 安装
 
 ```sh
+npm install dsh-mindseye
 npx @deepseek-ai/dsh plugin --profile web add dsh-mindseye
 ```
 

@@ -84,6 +84,7 @@ Vision routes use OpenAI-compatible Chat Completions or Responses APIs. Image ro
 ## Install
 
 ```sh
+npm install dsh-mindseye
 npx @deepseek-ai/dsh plugin --profile web add dsh-mindseye
 ```
 
