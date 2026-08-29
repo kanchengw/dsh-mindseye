@@ -8,8 +8,6 @@
 
 [English](README.md) | [中文](README.zh-CN.md)
 
-当前版本：0.2.7
-
 MindsEye 是 [DeepSeek Harness](https://github.com/haiziyao/dsh) 的插件，为纯文本模型提供图片理解、图片生成和可选的浏览器自动化能力，同时保留 DSH 会话作为主要用户交互界面。
 
 ## 核心能力

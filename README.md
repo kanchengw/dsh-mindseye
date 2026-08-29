@@ -8,8 +8,6 @@
 
 [English](README.md) | [中文](README.zh-CN.md)
 
-Current version: 0.2.7
-
 MindsEye is a plugin for [DeepSeek Harness](https://github.com/haiziyao/dsh). It gives text-only models access to image understanding, image generation, and optional browser automation while keeping the DSH conversation as the main user experience.
 
 ## Capabilities
